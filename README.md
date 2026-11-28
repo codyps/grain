@@ -165,8 +165,9 @@ Settings stay in `localStorage`; the app shell is cached for offline use.
   `Rotate` button for any remaining mismatch.
 - HEIC decoding depends on the browser (Safari works; Chrome often does not).
   Use a JPEG export if the image fails to load.
-- Default working resolution is 4096 px long edge. `Original` is bounded by the
-  device's canvas and WebGL texture limits; use 2048 px on older phones.
+- Default working resolution is **Original** (the full decoded image, capped by
+  the device's canvas/WebGL texture limit). Use 2048 px on older phones if the
+  full size is slow.
 - WebGL is required.
 - The corrected calibration is **ISO 400, Provia, DR100**. ISO 400–1250 measured
   flat; outside that range untested. Color film simulations measured flat;
