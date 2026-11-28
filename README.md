@@ -1,16 +1,20 @@
-# GRAIN — X-T4 film grain (PWA)
+# GRAIN — film grain (PWA)
 
-An installable, offline photo editor that adds the measured X-T4 film-grain
-effect to photos. It runs entirely in the browser: no uploads, no account.
+An installable, offline photo editor with two grain models: the measured X-T4
+operator and a physics-based layered-coverage model. It runs entirely in the
+browser: no uploads, no account.
 
 ## Features
 
+- **Two models**: measured X-T4 grain or physics-based layered coverage,
+  selected under `More → Model`.
 - **Full-screen viewer**: the image fills the screen. Pinch or scroll to zoom,
   drag to pan, double-tap or `Fit` to reset.
 - **Quick compare**: a floating eye button toggles the original without leaving
   the image.
-- **Compact tool tray**: `Size`, `Strength`, `Amount`, `Film`, and `More`; each
-  opens a small popover sheet so the image stays visible.
+- **Compact tool tray**: `Size`/`Strength`/`Amount`/`Film` for X-T4, or
+  `Grain`/`Layers`/`Amount`/`Mode` for physics; each opens a small popover
+  sheet so the image stays visible.
 - **Top actions**: camera, photos, and save.
 - **Live camera or library**: `Camera` opens an in-app live preview with a
   shutter, lens picker, zoom presets, and gallery shortcut; `Photos` opens the
@@ -20,17 +24,17 @@ effect to photos. It runs entirely in the browser: no uploads, no account.
 - **Rotate**: rotate the working image 90° clockwise from `More`.
 - **Installable PWA**: Android install prompt; iOS Add to Home Screen.
 - **Offline**: the app shell is cached by a service worker.
-- **Persistent settings**: size, strength, film, amount, seed, tone, resolution
-  and format are stored in `localStorage`.
+- **Persistent settings**: model, grain parameters, amount, seed, tone,
+  resolution and format are stored in `localStorage`.
 
 ## Viewer
 
 The photo is the main surface. Pinch or use the mouse wheel to zoom from 1× to
 8×, drag to pan, double-tap to reset, or tap the fit button. The eye button
-switches between the grain and the original. The bottom tray always shows the
-current size, strength, amount, and film; tapping a tool opens a compact sheet
-above it. `More` contains seed, tone response, resolution, save format, rotate,
-install, and reset.
+switches between the grain and the original. The bottom tray shows the current
+model's parameters; tapping a tool opens a compact sheet above it. `More`
+contains the model selector, seed, tone response (X-T4), physics color
+correlation and chroma, resolution, save format, rotate, install, and reset.
 
 ## Camera
 
@@ -57,7 +61,7 @@ library. The camera header shows the live resolution and zoom.
 - `Rotate` in the editor rotates the working image 90° clockwise. Use it if a
   browser/device reports video orientation differently than the preview.
 
-## Grain model
+## X-T4 model
 
 Corrected from uncompressed X-T4 RAF conversions (firmware 2.12; ISO 400,
 Provia, DR100):
@@ -89,6 +93,38 @@ slider thumb sits at the midpoint of 0–200%). The rendered amplitude at luma
 An earlier synthetic RAF (compressed X-T4 CFA plus an X-T30 header, black point
 4096) mis-scaled the tone and produced the old white-Small / 5.0-amplitude
 model. It is superseded by the uncompressed-X-T4 calibration above.
+
+## Physics model
+
+Select `More → Model → Physics`. This is the browser Tier-1 statistical
+implementation of the layered Poisson coverage/occlusion model in
+`reports/Film grain physics simulation.md` and `work/grain-physics/`.
+
+The physics path works in scene-linear light:
+
+- per-channel target coverage `p = 1 - Y` (or luminance `p = 1 - Y` in Mono);
+- amplitude `sqrt(p(1-p)/layers)` from the coverage variance, giving a midtone
+  peak and zero grain at black and white;
+- a clump-scale correlated field fitted to the Tier-2 autocorrelation
+  (`0.86 / 0.58 / 0.34` at lags 1–3 for 6 px);
+- Color uses per-channel fields correlated by `rho`; Mono applies the field to
+  luminance only; `Chroma scale` controls the color deviation around luminance.
+
+Defaults: **6 px grain, 120 effective layers, Color, rho 0.7, chroma 0.4**.
+The calibrated generic color-negative profile uses 120 effective layers; fewer
+layers give stronger grain.
+
+Important scope: the browser path is **Tier 1** — density-dependent correlated
+noise calibrated to the layered model's statistics. It does not place discrete
+polygonal grains, simulate layer-by-layer occlusion/light depletion, or model
+coupler/DIR chemistry. The full discrete-grain Tier-2 prototype is the CPU code
+in `work/grain-physics/` and is not shipped in the PWA. The generic profile is
+not a reconstruction of a specific film stock.
+
+The physics noise field is generated at up to 3072 px and sampled at the working
+resolution, so very large Originals use an upsampled field; use 2048 or 3072 px
+for speed. The physics model operates in linear light, so the sRGB display mean
+can shift slightly (about 0.3 code at the default).
 
 ## Run locally
 
@@ -143,10 +179,26 @@ Tone-curve bands, Large/Strong:
 | 220 (light) | 6.44 | 6.47 |
 | 255 (white) | 0.25 pre-clip | 0.16 |
 
-All amplitude and tone checks are within 6% of the model. No console errors or
-page errors; service worker active; JPEG download produced. The screenshots and
-test report are kept in the research workspace (`work/grain-web-test/`), not
-shipped in the deploy folder.
+All X-T4 amplitude and tone checks are within 6% of the model. No console
+errors or page errors; service worker active; JPEG download produced. The
+screenshots and test report are kept in the research workspace
+(`work/grain-web-test/`), not shipped in the deploy folder.
+
+Physics model at the calibrated default (6 px, 120 layers, Color, rho 0.7,
+chroma 0.4, 100%) on the same luma-134 flat and tone bands:
+
+| Check | Rendered |
+| --- | ---: |
+| Flat std at luma 134 | 7.37 |
+| Black band std | 0 |
+| Midtone band std | 7.35 |
+| Light band std | 4.06 |
+| White band std | 0 |
+| Mean shift at luma 134 | −0.31 code |
+
+The midtone peak and black/white suppression match the layered coverage
+model's `sqrt(p(1-p)/layers)` behavior. The physics test also exercises the
+model selector, tray labels, Color/Mono switch, and `More` controls.
 
 ## Files
 
@@ -191,9 +243,16 @@ Settings stay in `localStorage`; the app shell is cached for offline use.
   to share that path.
 - The tone curve was tabulated from the Strong/Large step wedge and is assumed
   to scale for the other size/strength combinations.
-- The model is statistically equivalent to the camera, not frame-identical:
-  the camera regenerates the field per conversion, and the exact PRNG, seed and
-  coefficient bytes are not recoverable from the output. The Large kernel is a
-  3-tap approximation; the camera has a small negative autocorrelation tail at
-  lags 4–5, likely JPEG.
+- The X-T4 model is statistically equivalent to the camera, not
+  frame-identical: the camera regenerates the field per conversion, and the
+  exact PRNG, seed and coefficient bytes are not recoverable from the output.
+  The Large kernel is a 3-tap approximation; the camera has a small negative
+  autocorrelation tail at lags 4–5, likely JPEG.
+- The physics model is a **Tier-1** browser approximation: density-dependent
+  correlated noise fitted to the layered model's statistics, not discrete
+  polygonal grains or layer-by-layer occlusion/light depletion. Coupler/DIR
+  chemistry and adjacency effects are not modeled. The generic profile is not a
+  specific stock. The physics noise field is capped at 3072 px and upsampled for
+  very large Originals; the linear-light render can shift the sRGB mean by a
+  fraction of a code value.
 - `Amount` is a creative multiplier, not an ISO or film-simulation simulation.

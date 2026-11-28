@@ -33,6 +33,7 @@
 
   const DEFAULTS = {
     version: 2,
+    model: 'xt4',
     size: 'large',
     strength: 'strong',
     film: 'color',
@@ -41,6 +42,11 @@
     tone: true,
     maxEdge: 0,
     format: 'jpeg',
+    physicsGrain: 6,
+    physicsLayers: 120,
+    physicsColor: 'color',
+    physicsRho: 0.7,
+    physicsChroma: 0.4,
   };
 
   const STORAGE_KEY = 'xt4grain.settings.v1';
@@ -92,9 +98,21 @@
     amount: $('amount'),
     amountOut: $('amountOut'),
     barAmount: $('barAmount'),
+    sizeLabel: $('sizeLabel'),
+    strengthLabel: $('strengthLabel'),
+    filmLabel: $('filmLabel'),
     sizeValue: $('sizeValue'),
     strengthValue: $('strengthValue'),
     filmValue: $('filmValue'),
+    modelHint: $('modelHint'),
+    physicsGrain: $('physicsGrain'),
+    physicsGrainOut: $('physicsGrainOut'),
+    physicsLayers: $('physicsLayers'),
+    physicsLayersOut: $('physicsLayersOut'),
+    physicsRho: $('physicsRho'),
+    physicsRhoOut: $('physicsRhoOut'),
+    physicsChroma: $('physicsChroma'),
+    physicsChromaOut: $('physicsChromaOut'),
     seedOut: $('seedOut'),
     shuffleBtn: $('shuffleBtn'),
     tone: $('tone'),
@@ -135,9 +153,15 @@
     const s = { ...DEFAULTS };
     try {
       const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      if (raw.model === 'xt4' || raw.model === 'physics') s.model = raw.model;
       if (raw.size === 'small' || raw.size === 'large') s.size = raw.size;
       if (raw.strength === 'weak' || raw.strength === 'strong') s.strength = raw.strength;
       if (raw.film === 'color' || raw.film === 'acros') s.film = raw.film;
+      if (raw.physicsColor === 'color' || raw.physicsColor === 'mono') s.physicsColor = raw.physicsColor;
+      if (Number.isFinite(raw.physicsGrain)) s.physicsGrain = Math.max(2, Math.min(16, Math.round(raw.physicsGrain)));
+      if (Number.isFinite(raw.physicsLayers)) s.physicsLayers = Math.max(4, Math.min(160, Math.round(raw.physicsLayers)));
+      if (Number.isFinite(raw.physicsRho)) s.physicsRho = Math.max(0, Math.min(0.95, raw.physicsRho));
+      if (Number.isFinite(raw.physicsChroma)) s.physicsChroma = Math.max(0, Math.min(1, raw.physicsChroma));
       if (Number.isFinite(raw.amount)) s.amount = Math.max(0, Math.min(200, Math.round(raw.amount)));
       if (Number.isFinite(raw.seed)) s.seed = Math.max(0, Math.min(4095, Math.round(raw.seed)));
       if (typeof raw.tone === 'boolean') s.tone = raw.tone;
@@ -201,6 +225,10 @@
   }
 
   function modelLabel() {
+    if (state.model === 'physics') {
+      return `Grain ${state.physicsGrain}px · ${state.physicsLayers} layers · ` +
+        `${state.physicsColor === 'mono' ? 'Mono' : 'Color'} · ${state.amount}%`;
+    }
     const size = state.size === 'small' ? 'Small' : 'Large';
     const strength = state.strength === 'weak' ? 'Weak' : 'Strong';
     const film = state.film === 'acros' ? 'Acros' : 'Color';
@@ -295,6 +323,120 @@
     }
   `;
 
+  // Physics tier: density-dependent coverage statistics from the layered
+  // Poisson model. A correlated Gaussian field is generated once per settings
+  // change, then modulated by sqrt(p(1-p)/layers) in the composite.
+  const NOISE_GLSL = `
+    float hash(vec2 p, float seed) {
+      float s = mod(seed, 4096.0);
+      p += vec2(s * 0.137, s * 0.271);
+      vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+      p3 += dot(p3, p3.yzx + 33.33);
+      return fract((p3.x + p3.y) * p3.z);
+    }
+
+    float gauss(vec2 p, float seed) {
+      float u1 = max(hash(p, seed), 1e-6);
+      float u2 = hash(p + vec2(37.0, 17.0), seed + 1.0);
+      return sqrt(-2.0 * log(u1)) * cos(6.283185307179586 * u2);
+    }
+  `;
+
+  const PHYS_NOISE_H = `
+    precision highp float;
+    uniform float u_seed;
+    uniform float u_step;
+    uniform float u_encode;
+    ${NOISE_GLSL}
+    void main() {
+      vec2 base = gl_FragCoord.xy;
+      vec4 sum = vec4(0.0);
+      for (int i = -3; i <= 3; i++) {
+        float d = abs(float(i));
+        float w = d < 0.5 ? 0.29607 : (d < 1.5 ? 0.21212 : (d < 2.5 ? 0.07461 : 0.06523));
+        vec2 p = base + vec2(float(i) * u_step, 0.0);
+        sum.r += gauss(p, u_seed) * w;
+        sum.g += gauss(p, u_seed + 17.0) * w;
+        sum.b += gauss(p, u_seed + 34.0) * w;
+        sum.a += gauss(p, u_seed + 51.0) * w;
+      }
+      gl_FragColor = vec4(clamp(0.5 + sum * u_encode, 0.0, 1.0));
+    }
+  `;
+
+  const PHYS_NOISE_V = `
+    precision highp float;
+    uniform sampler2D u_texA;
+    uniform vec2 u_texSize;
+    uniform float u_step;
+    uniform float u_rho;
+    uniform float u_encode;
+    uniform float u_norm;
+    varying vec2 v_uv;
+    void main() {
+      vec4 sum = vec4(0.0);
+      for (int i = -3; i <= 3; i++) {
+        float d = abs(float(i));
+        float w = d < 0.5 ? 0.29607 : (d < 1.5 ? 0.21212 : (d < 2.5 ? 0.07461 : 0.06523));
+        vec2 uv = v_uv + vec2(0.0, float(i) * u_step / u_texSize.y);
+        vec4 g = (texture2D(u_texA, uv) - 0.5) / u_encode;
+        sum += g * w;
+      }
+      sum *= u_norm;
+      float a = sqrt(u_rho);
+      float b = sqrt(max(0.0, 1.0 - u_rho));
+      vec3 mixed = a * vec3(sum.a) + b * sum.rgb;
+      gl_FragColor = vec4(clamp(0.5 + mixed / 6.0, 0.0, 1.0), 1.0);
+    }
+  `;
+
+  const PHYS_FRAG = `
+    precision highp float;
+    uniform sampler2D u_image;
+    uniform sampler2D u_noise;
+    uniform float u_gain;
+    uniform float u_mono;
+    uniform float u_chroma;
+    varying vec2 v_uv;
+
+    vec3 srgbToLinear(vec3 c) {
+      vec3 lo = c / 12.92;
+      vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));
+      return mix(hi, lo, 1.0 - step(vec3(0.04045), c));
+    }
+
+    vec3 linearToSrgb(vec3 c) {
+      vec3 lo = c * 12.92;
+      vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+      return mix(hi, lo, 1.0 - step(vec3(0.0031308), c));
+    }
+
+    void main() {
+      vec3 c = texture2D(u_image, v_uv).rgb;
+      vec3 lin = srgbToLinear(clamp(c, 0.0, 1.0));
+      vec3 n = texture2D(u_noise, v_uv).rgb;
+      vec3 g = (n - 0.5) * 6.0;
+
+      if (u_mono > 0.5) {
+        float y = dot(lin, vec3(0.2126, 0.7152, 0.0722));
+        float p = 1.0 - y;
+        float amp = sqrt(max(p * (1.0 - p), 0.0));
+        float d = g.r * amp * u_gain;
+        float yOut = y + d;
+        lin *= yOut / max(y, 1e-4);
+      } else {
+        vec3 p = 1.0 - lin;
+        vec3 amp = sqrt(max(p * (1.0 - p), vec3(0.0)));
+        vec3 dev = g * amp * u_gain;
+        float yDev = dot(dev, vec3(0.2126, 0.7152, 0.0722));
+        dev = yDev + u_chroma * (dev - yDev);
+        lin += dev;
+      }
+
+      gl_FragColor = vec4(linearToSrgb(clamp(lin, 0.0, 1.0)), 1.0);
+    }
+  `;
+
   class GrainRenderer {
     constructor(canvas) {
       this.canvas = canvas;
@@ -329,41 +471,81 @@
       return sh;
     }
 
-    init() {
+    makeProgram(fsSource) {
       const gl = this.gl;
       const vs = this.compile(gl.VERTEX_SHADER, VERT);
-      const fs = this.compile(gl.FRAGMENT_SHADER, FRAG);
-      if (!vs || !fs) return;
-
-      const p = gl.createProgram();
-      gl.attachShader(p, vs);
-      gl.attachShader(p, fs);
-      gl.linkProgram(p);
-      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
-        this.error = gl.getProgramInfoLog(p) || 'Program link failed.';
+      const fs = this.compile(gl.FRAGMENT_SHADER, fsSource);
+      if (!vs || !fs) return null;
+      const program = gl.createProgram();
+      gl.attachShader(program, vs);
+      gl.attachShader(program, fs);
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        this.error = gl.getProgramInfoLog(program) || 'Program link failed.';
         console.error(this.error);
-        return;
+        return null;
       }
-      this.program = p;
-      gl.useProgram(p);
+      return program;
+    }
 
-      this.aPos = gl.getAttribLocation(p, 'a_pos');
+    bindQuad(program) {
+      const gl = this.gl;
+      const loc = gl.getAttribLocation(program, 'a_pos');
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    }
+
+    init() {
+      const gl = this.gl;
+      this.program = this.makeProgram(FRAG);
+      if (!this.program) return;
+
       this.u = {
-        image: gl.getUniformLocation(p, 'u_image'),
-        seed: gl.getUniformLocation(p, 'u_seed'),
-        gain: gl.getUniformLocation(p, 'u_gain'),
-        dist: gl.getUniformLocation(p, 'u_dist'),
-        radius: gl.getUniformLocation(p, 'u_radius'),
-        k1: gl.getUniformLocation(p, 'u_k1'),
-        k2: gl.getUniformLocation(p, 'u_k2'),
-        tone: gl.getUniformLocation(p, 'u_tone'),
+        image: gl.getUniformLocation(this.program, 'u_image'),
+        seed: gl.getUniformLocation(this.program, 'u_seed'),
+        gain: gl.getUniformLocation(this.program, 'u_gain'),
+        dist: gl.getUniformLocation(this.program, 'u_dist'),
+        radius: gl.getUniformLocation(this.program, 'u_radius'),
+        k1: gl.getUniformLocation(this.program, 'u_k1'),
+        k2: gl.getUniformLocation(this.program, 'u_k2'),
+        tone: gl.getUniformLocation(this.program, 'u_tone'),
       };
 
-      const buf = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      this.physicsOk = false;
+      this.physHProgram = this.makeProgram(PHYS_NOISE_H);
+      this.physVProgram = this.makeProgram(PHYS_NOISE_V);
+      this.physProgram = this.makeProgram(PHYS_FRAG);
+      if (this.physHProgram && this.physVProgram && this.physProgram) {
+        this.physicsOk = true;
+        this.physHU = {
+          seed: gl.getUniformLocation(this.physHProgram, 'u_seed'),
+          step: gl.getUniformLocation(this.physHProgram, 'u_step'),
+          encode: gl.getUniformLocation(this.physHProgram, 'u_encode'),
+        };
+        this.physVU = {
+          texA: gl.getUniformLocation(this.physVProgram, 'u_texA'),
+          texSize: gl.getUniformLocation(this.physVProgram, 'u_texSize'),
+          step: gl.getUniformLocation(this.physVProgram, 'u_step'),
+          rho: gl.getUniformLocation(this.physVProgram, 'u_rho'),
+          encode: gl.getUniformLocation(this.physVProgram, 'u_encode'),
+          norm: gl.getUniformLocation(this.physVProgram, 'u_norm'),
+        };
+        this.physU = {
+          image: gl.getUniformLocation(this.physProgram, 'u_image'),
+          noise: gl.getUniformLocation(this.physProgram, 'u_noise'),
+          gain: gl.getUniformLocation(this.physProgram, 'u_gain'),
+          mono: gl.getUniformLocation(this.physProgram, 'u_mono'),
+          chroma: gl.getUniformLocation(this.physProgram, 'u_chroma'),
+        };
+      } else {
+        console.warn('Physics grain shaders unavailable; using the X-T4 model only.');
+      }
+
+      this.buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
       gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-      gl.enableVertexAttribArray(this.aPos);
-      gl.vertexAttribPointer(this.aPos, 2, gl.FLOAT, false, 0, 0);
+      this.bindQuad(this.program);
 
       this.tex = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, this.tex);
@@ -373,6 +555,9 @@
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
+      this.physSig = '';
+      this.physA = null;
+      this.physB = null;
       this.ok = true;
     }
 
@@ -394,12 +579,101 @@
       gl.bindTexture(gl.TEXTURE_2D, this.tex);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
       this.hasImage = true;
+      this.physSig = '';
+    }
+
+    createPhysicsTarget(w, h) {
+      const gl = this.gl;
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+      const fbo = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      if (status !== gl.FRAMEBUFFER_COMPLETE) {
+        console.error('Physics render target incomplete:', status);
+        gl.deleteTexture(tex);
+        gl.deleteFramebuffer(fbo);
+        return null;
+      }
+      return { tex, fbo, w, h };
+    }
+
+    deletePhysicsTargets() {
+      const gl = this.gl;
+      [this.physA, this.physB].forEach((target) => {
+        if (!target) return;
+        gl.deleteTexture(target.tex);
+        gl.deleteFramebuffer(target.fbo);
+      });
+      this.physA = null;
+      this.physB = null;
+      this.physSig = '';
+    }
+
+    ensurePhysicsTargets(w, h) {
+      if (this.physA && this.physA.w === w && this.physA.h === h &&
+          this.physB && this.physB.w === w && this.physB.h === h) {
+        return true;
+      }
+      this.deletePhysicsTargets();
+      this.physA = this.createPhysicsTarget(w, h);
+      this.physB = this.createPhysicsTarget(w, h);
+      if (!this.physA || !this.physB) {
+        this.deletePhysicsTargets();
+        this.physicsOk = false;
+        return false;
+      }
+      return true;
+    }
+
+    generatePhysicsNoise(w, h, step, seed, rho) {
+      const gl = this.gl;
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.physA.fbo);
+      gl.viewport(0, 0, w, h);
+      gl.useProgram(this.physHProgram);
+      this.bindQuad(this.physHProgram);
+      gl.uniform1f(this.physHU.seed, seed);
+      gl.uniform1f(this.physHU.step, step);
+      gl.uniform1f(this.physHU.encode, 0.3752);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.physB.fbo);
+      gl.viewport(0, 0, w, h);
+      gl.useProgram(this.physVProgram);
+      this.bindQuad(this.physVProgram);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this.physA.tex);
+      gl.uniform1i(this.physVU.texA, 2);
+      gl.uniform2f(this.physVU.texSize, w, h);
+      gl.uniform1f(this.physVU.step, step);
+      gl.uniform1f(this.physVU.rho, rho);
+      gl.uniform1f(this.physVU.encode, 0.3752);
+      gl.uniform1f(this.physVU.norm, 1.0 / 0.197294);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
 
     render(p) {
-      if (!this.ok || !this.hasImage) return;
+      if (!this.ok || !this.hasImage) return false;
+      if (p.model === 'physics' && this.physicsOk) return this.renderPhysics(p);
+      return this.renderXt4(p);
+    }
+
+    renderXt4(p) {
       const gl = this.gl;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, this.canvas.width, this.canvas.height);
       gl.useProgram(this.program);
+      this.bindQuad(this.program);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.tex);
       gl.uniform1i(this.u.image, 0);
@@ -411,6 +685,43 @@
       gl.uniform1f(this.u.k2, p.k2);
       gl.uniform1f(this.u.tone, p.tone ? 1 : 0);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      return true;
+    }
+
+    renderPhysics(p) {
+      if (!this.physicsOk) return false;
+      const gl = this.gl;
+      const w = this.canvas.width;
+      const h = this.canvas.height;
+      const maxEdge = Math.min(3072, this.maxTextureSize());
+      const scale = Math.min(1, maxEdge / Math.max(w, h));
+      const texW = Math.max(1, Math.round(w * scale));
+      const texH = Math.max(1, Math.round(h * scale));
+      const step = Math.max(0.02, Math.min(8, (p.grainPx / 6) * (texW / w)));
+      const rho = Number.isFinite(p.rho) ? p.rho : 0.8;
+      const sig = `${texW}x${texH}|${p.seed}|${rho.toFixed(3)}|${step.toFixed(4)}`;
+      if (!this.ensurePhysicsTargets(texW, texH)) return false;
+      if (sig !== this.physSig) {
+        this.generatePhysicsNoise(texW, texH, step, p.seed, rho);
+        this.physSig = sig;
+      }
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, w, h);
+      gl.useProgram(this.physProgram);
+      this.bindQuad(this.physProgram);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.tex);
+      gl.uniform1i(this.physU.image, 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this.physB.tex);
+      gl.uniform1i(this.physU.noise, 1);
+      gl.uniform1f(this.physU.gain,
+        (p.amount / 100) * 0.8 / Math.sqrt(Math.max(1, p.layers)));
+      gl.uniform1f(this.physU.mono, p.mono ? 1 : 0);
+      gl.uniform1f(this.physU.chroma, p.chroma);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      return true;
     }
   }
 
@@ -536,8 +847,30 @@
       showToast(renderer ? renderer.error : 'WebGL is not available.');
       return;
     }
+
+    if (state.model === 'physics') {
+      if (renderer.physicsOk) {
+        const ok = renderer.render({
+          model: 'physics',
+          seed: state.seed,
+          grainPx: state.physicsGrain,
+          layers: state.physicsLayers,
+          mono: state.physicsColor === 'mono',
+          rho: state.physicsRho,
+          chroma: state.physicsChroma,
+          amount: state.amount,
+        });
+        if (ok) return;
+      }
+      state.model = 'xt4';
+      saveSettings();
+      syncUI();
+      showToast('Physics renderer unavailable; using X-T4.');
+    }
+
     const p = modelParams(state.size, state.strength, state.film);
     renderer.render({
+      model: 'xt4',
       seed: state.seed,
       gain: computeGain(state.size, state.strength, state.amount, state.film),
       dist: p.dist,
@@ -1149,12 +1482,47 @@
       b.classList.toggle('active', on);
       b.setAttribute('aria-pressed', String(on));
     });
+    document.querySelectorAll('[data-model]').forEach((b) => {
+      const on = b.dataset.model === state.model;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+    document.querySelectorAll('[data-physics-color]').forEach((b) => {
+      const on = b.dataset.physicsColor === state.physicsColor;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+
+    const physics = state.model === 'physics';
+    document.querySelectorAll('.xt4-only').forEach((el) => { el.hidden = physics; });
+    document.querySelectorAll('.physics-only').forEach((el) => { el.hidden = !physics; });
+
     els.amount.value = String(state.amount);
     els.amountOut.textContent = `${state.amount}%`;
     els.barAmount.textContent = `${state.amount}%`;
-    els.sizeValue.textContent = state.size === 'small' ? 'Small' : 'Large';
-    els.strengthValue.textContent = state.strength === 'weak' ? 'Weak' : 'Strong';
-    els.filmValue.textContent = state.film === 'acros' ? 'Acros' : 'Color';
+    els.sizeLabel.textContent = physics ? 'Grain' : 'Size';
+    els.strengthLabel.textContent = physics ? 'Layers' : 'Strength';
+    els.filmLabel.textContent = physics ? 'Mode' : 'Film';
+    els.sizeValue.textContent = physics
+      ? `${state.physicsGrain} px`
+      : (state.size === 'small' ? 'Small' : 'Large');
+    els.strengthValue.textContent = physics
+      ? String(state.physicsLayers)
+      : (state.strength === 'weak' ? 'Weak' : 'Strong');
+    els.filmValue.textContent = physics
+      ? (state.physicsColor === 'mono' ? 'Mono' : 'Color')
+      : (state.film === 'acros' ? 'Acros' : 'Color');
+    els.modelHint.textContent = physics
+      ? 'Tier-1 layered-coverage physics, browser preview.'
+      : 'Measured X-T4 film-grain operator.';
+    els.physicsGrain.value = String(state.physicsGrain);
+    els.physicsGrainOut.textContent = `${state.physicsGrain} px`;
+    els.physicsLayers.value = String(state.physicsLayers);
+    els.physicsLayersOut.textContent = String(state.physicsLayers);
+    els.physicsRho.value = String(state.physicsRho);
+    els.physicsRhoOut.textContent = state.physicsRho.toFixed(2);
+    els.physicsChroma.value = String(state.physicsChroma);
+    els.physicsChromaOut.textContent = state.physicsChroma.toFixed(2);
     els.seedOut.textContent = String(state.seed);
     els.tone.checked = state.tone;
     els.resolution.value = String(state.maxEdge);
@@ -1358,6 +1726,56 @@
       });
     });
 
+    document.querySelectorAll('[data-model]').forEach((b) => {
+      b.addEventListener('click', () => {
+        state.model = b.dataset.model;
+        saveSettings();
+        syncUI();
+        render();
+      });
+    });
+
+    document.querySelectorAll('[data-physics-color]').forEach((b) => {
+      b.addEventListener('click', () => {
+        state.physicsColor = b.dataset.physicsColor;
+        saveSettings();
+        syncUI();
+        scheduleRender();
+      });
+    });
+
+    els.physicsGrain.addEventListener('input', () => {
+      state.physicsGrain = Math.max(2, Math.min(16, Number(els.physicsGrain.value) || 6));
+      els.physicsGrainOut.textContent = `${state.physicsGrain} px`;
+      saveSettings();
+      syncUI();
+      scheduleRender();
+    });
+
+    els.physicsLayers.addEventListener('input', () => {
+      state.physicsLayers = Math.max(4, Math.min(160, Number(els.physicsLayers.value) || 120));
+      els.physicsLayersOut.textContent = String(state.physicsLayers);
+      saveSettings();
+      syncUI();
+      scheduleRender();
+    });
+
+    els.physicsRho.addEventListener('input', () => {
+      state.physicsRho = Math.max(0, Math.min(0.95, Number(els.physicsRho.value) || 0));
+      els.physicsRhoOut.textContent = state.physicsRho.toFixed(2);
+      saveSettings();
+      syncUI();
+      scheduleRender();
+    });
+
+    els.physicsChroma.addEventListener('input', () => {
+      state.physicsChroma = Math.max(0, Math.min(1, Number(els.physicsChroma.value) || 0));
+      els.physicsChromaOut.textContent = state.physicsChroma.toFixed(2);
+      saveSettings();
+      syncUI();
+      scheduleRender();
+    });
+
     els.amount.addEventListener('input', () => {
       state.amount = Math.max(0, Math.min(200, Number(els.amount.value) || 0));
       els.amountOut.textContent = `${state.amount}%`;
@@ -1499,7 +1917,10 @@
     try {
       const blob = await new Promise((resolve) => renderer.canvas.toBlob(resolve, type, 0.95));
       if (!blob) throw new Error('encode');
-      const name = `grain-${state.size}-${state.strength}-${Date.now()}.${ext}`;
+      const tag = state.model === 'physics'
+        ? `physics-${state.physicsGrain}px-${state.physicsLayers}l`
+        : `${state.size}-${state.strength}`;
+      const name = `grain-${tag}-${Date.now()}.${ext}`;
       const file = new File([blob], name, { type });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         try {

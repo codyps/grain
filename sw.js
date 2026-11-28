@@ -1,4 +1,4 @@
-const CACHE = 'xt4-grain-v11';
+const CACHE = 'xt4-grain-v12';
 const ASSETS = [
   './',
   './index.html',

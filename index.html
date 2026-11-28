@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0d0d0f">
-  <meta name="description" content="Corrected X-T4 film grain for your photos. Local, installable, offline.">
+  <meta name="description" content="Measured X-T4 grain or a physics-based layered grain model. Local, installable, offline.">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Grain">
-  <title>GRAIN — X-T4 film grain</title>
+  <title>GRAIN — film grain</title>
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -100,14 +100,14 @@
               <circle cx="12" cy="12" r="2"/>
               <circle cx="18" cy="12" r="2.8"/>
             </svg>
-            <span class="tool-label">Size</span>
+            <span class="tool-label" id="sizeLabel">Size</span>
             <small class="tool-value" id="sizeValue">Large</small>
           </button>
           <button class="tool" type="button" data-open-sheet="strength" aria-label="Grain strength">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M5 19V9M12 19V5M19 19v-7"/>
             </svg>
-            <span class="tool-label">Strength</span>
+            <span class="tool-label" id="strengthLabel">Strength</span>
             <small class="tool-value" id="strengthValue">Strong</small>
           </button>
           <button class="tool" type="button" data-open-sheet="amount" aria-label="Grain amount">
@@ -124,7 +124,7 @@
               <rect x="3" y="5" width="18" height="14" rx="2"/>
               <path d="M7 5v14M17 5v14M3 9h4M3 15h4M17 9h4M17 15h4"/>
             </svg>
-            <span class="tool-label">Film</span>
+            <span class="tool-label" id="filmLabel">Film</span>
             <small class="tool-value" id="filmValue">Color</small>
           </button>
           <button class="tool" type="button" data-open-sheet="more" aria-label="More settings">
@@ -138,51 +138,91 @@
 
       <div class="sheets" id="sheets">
         <section class="control-sheet" data-sheet="size" hidden aria-label="Grain size">
-          <div class="sheet-head"><span>Size</span><small>grain scale</small></div>
-          <div class="seg" role="group" aria-label="Grain size">
-            <button type="button" data-size="small">Small</button>
-            <button type="button" data-size="large" class="active">Large</button>
+          <div class="xt4-only">
+            <div class="sheet-head"><span>Size</span><small>grain scale</small></div>
+            <div class="seg" role="group" aria-label="Grain size">
+              <button type="button" data-size="small">Small</button>
+              <button type="button" data-size="large" class="active">Large</button>
+            </div>
+            <p class="sheet-hint">Small: finer speckle · Large: softer, larger grain</p>
           </div>
-          <p class="sheet-hint">Small: finer speckle · Large: softer, larger grain</p>
+          <div class="physics-only" hidden>
+            <div class="sheet-head"><span>Grain size</span><output id="physicsGrainOut">6 px</output></div>
+            <input id="physicsGrain" type="range" min="2" max="16" step="1" value="6">
+            <p class="sheet-hint">Mean dye-cloud diameter in output pixels.</p>
+          </div>
         </section>
 
         <section class="control-sheet" data-sheet="strength" hidden aria-label="Grain strength">
-          <div class="sheet-head"><span>Strength</span><small>amplitude</small></div>
-          <div class="seg" role="group" aria-label="Grain strength">
-            <button type="button" data-strength="weak">Weak</button>
-            <button type="button" data-strength="strong" class="active">Strong</button>
+          <div class="xt4-only">
+            <div class="sheet-head"><span>Strength</span><small>amplitude</small></div>
+            <div class="seg" role="group" aria-label="Grain strength">
+              <button type="button" data-strength="weak">Weak</button>
+              <button type="button" data-strength="strong" class="active">Strong</button>
+            </div>
+            <p class="sheet-hint">Strong is about twice the amplitude of Weak.</p>
           </div>
-          <p class="sheet-hint">Strong is about twice the amplitude of Weak.</p>
+          <div class="physics-only" hidden>
+            <div class="sheet-head"><span>Layers</span><output id="physicsLayersOut">120</output></div>
+            <input id="physicsLayers" type="range" min="4" max="160" step="4" value="120">
+            <p class="sheet-hint">Effective layers; the calibrated generic profile uses 120. Fewer layers give stronger grain.</p>
+          </div>
         </section>
 
         <section class="control-sheet" data-sheet="amount" hidden aria-label="Grain amount">
           <div class="sheet-head"><span>Amount</span><output id="amountOut" for="amount">100%</output></div>
           <input id="amount" type="range" min="0" max="200" step="5" value="100">
           <div class="range-scale" aria-hidden="true"><span>0%</span><span>100%</span><span>200%</span></div>
-          <p class="sheet-hint">100% = measured X-T4 amplitude.</p>
+          <p class="sheet-hint xt4-only">100% = measured X-T4 amplitude.</p>
+          <p class="sheet-hint physics-only" hidden>100% = calibrated physics amplitude.</p>
         </section>
 
         <section class="control-sheet" data-sheet="film" hidden aria-label="Film profile">
-          <div class="sheet-head"><span>Film</span><small>grain profile</small></div>
-          <div class="seg" role="group" aria-label="Film grain profile">
-            <button type="button" data-film="color" class="active">Color</button>
-            <button type="button" data-film="acros">Acros</button>
+          <div class="xt4-only">
+            <div class="sheet-head"><span>Film</span><small>grain profile</small></div>
+            <div class="seg" role="group" aria-label="Film grain profile">
+              <button type="button" data-film="color" class="active">Color</button>
+              <button type="button" data-film="acros">Acros</button>
+            </div>
+            <p class="sheet-hint">Acros/B&amp;W: slightly finer, lower-amplitude grain</p>
           </div>
-          <p class="sheet-hint">Acros/B&amp;W: slightly finer, lower-amplitude grain</p>
+          <div class="physics-only" hidden>
+            <div class="sheet-head"><span>Color</span><small>dye layers</small></div>
+            <div class="seg" role="group" aria-label="Physics grain color">
+              <button type="button" data-physics-color="color" class="active">Color</button>
+              <button type="button" data-physics-color="mono">Mono</button>
+            </div>
+            <p class="sheet-hint">Color uses independent per-channel dye-layer noise; Mono applies luminance grain.</p>
+          </div>
         </section>
 
         <section class="control-sheet sheet-more" data-sheet="more" hidden aria-label="More settings">
           <div class="sheet-head"><span>More</span><small>output & detail</small></div>
           <div class="more-list">
             <div class="more-row">
+              <span>Model</span>
+              <div class="seg small" role="group" aria-label="Grain model">
+                <button type="button" data-model="xt4" class="active">X-T4</button>
+                <button type="button" data-model="physics">Physics</button>
+              </div>
+            </div>
+            <p id="modelHint" class="sheet-hint">Measured X-T4 film-grain operator.</p>
+            <div class="more-row">
               <span>Seed</span>
               <div class="row"><output id="seedOut">517</output><button id="shuffleBtn" class="ghost small" type="button">Shuffle</button></div>
             </div>
-            <label class="switch">
+            <label class="switch xt4-only">
               <span>Camera tone response<small>suppress blacks, roll off highlights</small></span>
               <input id="tone" type="checkbox" checked>
               <i aria-hidden="true"></i>
             </label>
+            <div class="physics-only" hidden>
+              <div class="more-row"><span>Color correlation</span><output id="physicsRhoOut">0.70</output></div>
+              <input id="physicsRho" type="range" min="0" max="0.95" step="0.05" value="0.7">
+              <div class="more-row"><span>Chroma scale</span><output id="physicsChromaOut">0.4</output></div>
+              <input id="physicsChroma" type="range" min="0" max="1" step="0.05" value="0.4">
+              <p class="sheet-hint">Tier-1 statistics of the layered coverage model: density-dependent variance, clump-scale correlation, correlated color layers. The full discrete-grain Tier-2 prototype is in the research repo.</p>
+            </div>
             <div class="more-row">
               <span>Resolution</span>
               <select id="resolution">
