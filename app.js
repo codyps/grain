@@ -53,11 +53,26 @@
     busy: $('busy'),
     status: $('status'),
     compareBtn: $('compareBtn'),
+    rotateBtn: $('rotateBtn'),
     saveBtn: $('saveBtn'),
     takeBtn: $('takeBtn'),
     chooseBtn: $('chooseBtn'),
     cameraInput: $('cameraInput'),
     galleryInput: $('galleryInput'),
+    cameraView: $('cameraView'),
+    cameraVideo: $('cameraVideo'),
+    cameraClose: $('cameraClose'),
+    cameraFlip: $('cameraFlip'),
+    cameraShutter: $('cameraShutter'),
+    cameraPhotos: $('cameraPhotos'),
+    cameraStatus: $('cameraStatus'),
+    cameraLoading: $('cameraLoading'),
+    cameraError: $('cameraError'),
+    cameraErrorText: $('cameraErrorText'),
+    cameraRetry: $('cameraRetry'),
+    cameraFallback: $('cameraFallback'),
+    cameraErrorPhotos: $('cameraErrorPhotos'),
+    cameraErrorClose: $('cameraErrorClose'),
     amount: $('amount'),
     amountOut: $('amountOut'),
     seedOut: $('seedOut'),
@@ -76,6 +91,11 @@
   let renderTimer = 0;
   let statusTimer = 0;
   let busyCount = 0;
+  let cameraStream = null;
+  let cameraFacing = 'environment';
+  let cameraActive = false;
+  let cameraStarting = false;
+  let cameraRequest = 0;
 
   // ---------------------------------------------------------------- settings
 
@@ -389,8 +409,16 @@
     return { w: Math.max(1, Math.round(w * scale)), h: Math.max(1, Math.round(h * scale)) };
   }
 
+  function sourceSize() {
+    const rotation = source.rotation || 0;
+    return rotation % 180 === 0
+      ? { w: source.w, h: source.h }
+      : { w: source.h, h: source.w };
+  }
+
   function prepare() {
-    const { w, h } = workSize(source.w, source.h);
+    const size = sourceSize();
+    const { w, h } = workSize(size.w, size.h);
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
@@ -398,7 +426,15 @@
     if (!ctx) throw new Error('2D canvas unavailable.');
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(source.bitmap, 0, 0, w, h);
+
+    const scale = Math.min(w / size.w, h / size.h);
+    const dw = source.w * scale;
+    const dh = source.h * scale;
+    ctx.save();
+    ctx.translate(w / 2, h / 2);
+    ctx.rotate(((source.rotation || 0) * Math.PI) / 180);
+    ctx.drawImage(source.bitmap, -dw / 2, -dh / 2, dw, dh);
+    ctx.restore();
 
     work = { canvas, w, h };
 
@@ -422,7 +458,7 @@
       const next = await decodeFile(file);
       if (source && source.url) URL.revokeObjectURL(source.url);
       if (source && source.bitmap && source.bitmap.close) source.bitmap.close();
-      source = next;
+      source = { ...next, rotation: 0 };
 
       try {
         prepare();
@@ -442,6 +478,7 @@
       els.canvasWrap.hidden = false;
       els.empty.hidden = true;
       els.compareBtn.disabled = false;
+      els.rotateBtn.disabled = false;
       els.saveBtn.disabled = false;
       els.takeBtn.classList.remove('primary');
       els.saveBtn.classList.add('primary');
@@ -489,6 +526,258 @@
     els.original.hidden = !on;
   }
 
+  function rotateImage() {
+    if (!source || !work) return;
+    source.rotation = ((source.rotation || 0) + 90) % 360;
+    setBusy(true);
+    try {
+      prepare();
+      render();
+      updateStatus();
+      showOriginal(false);
+      els.compareBtn.textContent = 'Compare';
+      els.compareBtn.setAttribute('aria-pressed', 'false');
+    } catch (err) {
+      console.error(err);
+      setStatus('Could not rotate the image.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ------------------------------------------------------------------ camera
+
+  function isIOSDevice() {
+    const ua = navigator.userAgent || '';
+    return /iPad|iPhone|iPod/.test(ua) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  }
+
+  function stopCameraStream() {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      cameraStream = null;
+    }
+    if (els.cameraVideo) {
+      els.cameraVideo.pause();
+      els.cameraVideo.srcObject = null;
+      els.cameraVideo.classList.remove('front');
+    }
+  }
+
+  function cameraErrorMessage(err) {
+    const name = err && err.name;
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      return 'Camera access is blocked. Allow camera access for this site in Settings, or use Photos.';
+    }
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+      if (cameraFacing === 'user') {
+        cameraFacing = 'environment';
+        return 'The front camera is unavailable. Try again to use the rear camera, or use Photos.';
+      }
+      return 'No camera was found on this device. Use Photos instead.';
+    }
+    if (name === 'NotReadableError' || name === 'TrackStartError') {
+      return 'The camera is already in use by another app. Close that app and try again.';
+    }
+    if (name === 'OverconstrainedError') {
+      if (cameraFacing === 'user') cameraFacing = 'environment';
+      return 'This camera does not support the requested mode. Try again, or use Photos.';
+    }
+    return 'Could not start the camera. Use the phone camera or Photos instead.';
+  }
+
+  function showCameraError(err) {
+    els.cameraErrorText.textContent = cameraErrorMessage(err);
+    els.cameraError.hidden = false;
+    els.cameraStatus.textContent = 'Camera unavailable';
+  }
+
+  async function getCameraStream(facing) {
+    const md = navigator.mediaDevices;
+    const base = { audio: false, video: { facingMode: { ideal: facing } } };
+    const high = {
+      audio: false,
+      video: {
+        facingMode: { ideal: facing },
+        width: { ideal: 3840 },
+        height: { ideal: 2160 },
+      },
+    };
+    try {
+      return await md.getUserMedia(high);
+    } catch (err) {
+      if (err && (err.name === 'OverconstrainedError' || err.name === 'NotFoundError' ||
+                  err.name === 'TypeError')) {
+        return await md.getUserMedia(base);
+      }
+      throw err;
+    }
+  }
+
+  async function openCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      els.cameraInput.click();
+      return;
+    }
+    if (cameraStarting) return;
+
+    const request = ++cameraRequest;
+    cameraStarting = true;
+    cameraActive = true;
+    els.cameraView.hidden = false;
+    document.body.classList.add('camera-open');
+    els.cameraError.hidden = true;
+    els.cameraLoading.hidden = false;
+    els.cameraStatus.textContent = 'Starting camera…';
+    els.cameraShutter.disabled = true;
+    stopCameraStream();
+
+    try {
+      const stream = await getCameraStream(cameraFacing);
+      if (!cameraActive || request !== cameraRequest) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      cameraStream = stream;
+      els.cameraVideo.srcObject = stream;
+      els.cameraVideo.classList.toggle('front', cameraFacing === 'user');
+      await els.cameraVideo.play();
+
+      if (!els.cameraVideo.videoWidth) {
+        await new Promise((resolve) => {
+          const done = () => {
+            els.cameraVideo.removeEventListener('loadedmetadata', done);
+            resolve();
+          };
+          els.cameraVideo.addEventListener('loadedmetadata', done);
+          setTimeout(done, 1500);
+        });
+      }
+
+      const vw = els.cameraVideo.videoWidth;
+      const vh = els.cameraVideo.videoHeight;
+      els.cameraStatus.textContent = vw && vh ? `Live · ${vw} × ${vh}` : 'Live camera';
+      els.cameraLoading.hidden = true;
+      els.cameraShutter.disabled = false;
+    } catch (err) {
+      if (!cameraActive || request !== cameraRequest) return;
+      console.error(err);
+      els.cameraLoading.hidden = true;
+      els.cameraShutter.disabled = true;
+      showCameraError(err);
+    } finally {
+      cameraStarting = false;
+    }
+  }
+
+  function closeCamera() {
+    cameraActive = false;
+    cameraStarting = false;
+    cameraRequest++;
+    stopCameraStream();
+    els.cameraView.hidden = true;
+    document.body.classList.remove('camera-open');
+    els.cameraError.hidden = true;
+    els.cameraLoading.hidden = true;
+    els.cameraShutter.disabled = true;
+    els.cameraStatus.textContent = 'Camera';
+  }
+
+  async function flipCamera() {
+    if (cameraStarting) return;
+    cameraFacing = cameraFacing === 'environment' ? 'user' : 'environment';
+    await openCamera();
+  }
+
+  function captureRotation(vw, vh) {
+    if (vw <= vh) return 0;
+    if (!isIOSDevice()) return 0;
+
+    const raw = typeof window.orientation === 'number'
+      ? window.orientation
+      : (screen.orientation && typeof screen.orientation.angle === 'number'
+        ? screen.orientation.angle
+        : 0);
+    const angle = ((raw % 360) + 360) % 360;
+    if (angle === 90 || angle === 270) return 0;
+    return angle === 180 ? 270 : 90;
+  }
+
+  async function captureFrame() {
+    const video = els.cameraVideo;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (!vw || !vh) return null;
+
+    const rotation = captureRotation(vw, vh);
+    const swap = rotation === 90 || rotation === 270;
+    const canvas = document.createElement('canvas');
+    canvas.width = swap ? vh : vw;
+    canvas.height = swap ? vw : vh;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    ctx.save();
+    if (rotation === 90) {
+      ctx.translate(canvas.width, 0);
+      ctx.rotate(Math.PI / 2);
+    } else if (rotation === 180) {
+      ctx.translate(canvas.width, canvas.height);
+      ctx.rotate(Math.PI);
+    } else if (rotation === 270) {
+      ctx.translate(0, canvas.height);
+      ctx.rotate(-Math.PI / 2);
+    }
+    ctx.drawImage(video, 0, 0, vw, vh);
+    ctx.restore();
+
+    return await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.95));
+  }
+
+  async function capturePhoto() {
+    if (!cameraActive || !cameraStream || els.cameraShutter.disabled) return;
+    els.cameraShutter.disabled = true;
+    els.cameraLoading.hidden = false;
+    els.cameraStatus.textContent = 'Capturing…';
+
+    try {
+      let blob = null;
+      const track = cameraStream.getVideoTracks()[0];
+      if (window.ImageCapture && typeof window.ImageCapture === 'function' && track) {
+        try {
+          const capture = new window.ImageCapture(track);
+          if (typeof capture.takePhoto === 'function') blob = await capture.takePhoto();
+        } catch (err) {
+          console.warn('ImageCapture failed; using the video frame.', err);
+        }
+      }
+      if (!blob) blob = await captureFrame();
+      if (!blob) throw new Error('capture');
+
+      const type = blob.type || 'image/jpeg';
+      const ext = type.includes('png') ? 'png' : 'jpg';
+      const file = new File([blob], `camera-${Date.now()}.${ext}`, { type });
+      closeCamera();
+      await handleFile(file);
+    } catch (err) {
+      console.error(err);
+      els.cameraLoading.hidden = true;
+      els.cameraShutter.disabled = false;
+      els.cameraStatus.textContent = 'Capture failed · try again';
+    }
+  }
+
+  function cameraToGallery() {
+    closeCamera();
+    els.galleryInput.click();
+  }
+
+  function cameraToNative() {
+    closeCamera();
+    els.cameraInput.click();
+  }
+
   // -------------------------------------------------------------------- UI
 
   function setBusy(on) {
@@ -510,9 +799,10 @@
 
   function updateStatus() {
     if (!work || !source) return;
-    const dims = (work.w === source.w && work.h === source.h)
+    const size = sourceSize();
+    const dims = (work.w === size.w && work.h === size.h)
       ? `${work.w} × ${work.h}`
-      : `${source.w} × ${source.h} → ${work.w} × ${work.h}`;
+      : `${size.w} × ${size.h} → ${work.w} × ${work.h}`;
     setStatus(`${dims} · ${modelLabel()}`);
   }
 
@@ -623,7 +913,7 @@
       render();
     });
 
-    els.takeBtn.addEventListener('click', () => els.cameraInput.click());
+    els.takeBtn.addEventListener('click', openCamera);
     els.chooseBtn.addEventListener('click', () => els.galleryInput.click());
 
     const onPick = (input) => {
@@ -636,12 +926,33 @@
     onPick(els.cameraInput);
     onPick(els.galleryInput);
 
+    els.cameraClose.addEventListener('click', closeCamera);
+    els.cameraShutter.addEventListener('click', capturePhoto);
+    els.cameraFlip.addEventListener('click', flipCamera);
+    els.cameraPhotos.addEventListener('click', cameraToGallery);
+    els.cameraRetry.addEventListener('click', openCamera);
+    els.cameraFallback.addEventListener('click', cameraToNative);
+    els.cameraErrorPhotos.addEventListener('click', cameraToGallery);
+    els.cameraErrorClose.addEventListener('click', closeCamera);
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && cameraActive) closeCamera();
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && cameraActive && !cameraStarting) closeCamera();
+    });
+    window.addEventListener('pagehide', () => {
+      if (cameraActive) closeCamera();
+    });
+
     els.compareBtn.addEventListener('click', () => {
       const show = els.original.hidden;
       showOriginal(show);
       els.compareBtn.setAttribute('aria-pressed', String(show));
       els.compareBtn.textContent = show ? 'Show grain' : 'Compare';
     });
+
+    els.rotateBtn.addEventListener('click', rotateImage);
 
     els.saveBtn.addEventListener('click', saveImage);
 
@@ -723,9 +1034,7 @@
       els.installBtn.hidden = true;
     });
 
-    const ua = navigator.userAgent || '';
-    const isIOS = /iPad|iPhone|iPod/.test(ua) ||
-      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isIOS = isIOSDevice();
     const standalone = window.matchMedia('(display-mode: standalone)').matches ||
       navigator.standalone === true;
     if (isIOS && !standalone) els.iosHint.hidden = false;

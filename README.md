@@ -5,19 +5,41 @@ effect to photos. It runs entirely in the browser: no uploads, no account.
 
 ## Features
 
-- **Camera or library**: `Camera` opens the rear camera; `Photos` opens the
-  photo picker.
+- **Live camera or library**: `Camera` opens an in-app live preview with a
+  shutter, flip, and gallery shortcut; `Photos` opens the photo picker. On
+  browsers that support `getUserMedia`, there is no native "Use Photo" step.
 - **Local processing**: WebGL shader, no server.
 - **Controls**: Small/Large grain, Weak/Strong strength, Color/Acros film
   profile, Amount 0–200%, Seed + Shuffle, Camera tone response, working
   resolution, JPEG/PNG.
 - **Compare** toggle against the original.
+- **Rotate**: rotate the working image 90° clockwise.
 - **Installable PWA**: Android install prompt; iOS Add to Home Screen.
 - **Offline**: the app shell is cached by a service worker.
 - **Persistent settings**: size, strength, film, amount, seed, tone, resolution
   and format are stored in `localStorage`.
 - **App shell**: the header and action dock stay fixed; only the content area
   scrolls.
+
+## Camera
+
+`Camera` requests the rear camera with `getUserMedia` and shows a full-screen
+live preview. The shutter captures the current video frame, closes the camera,
+and loads the photo into the editor. The flip button switches between rear and
+front cameras; the photo button opens the library. The camera header shows the
+live resolution.
+
+- Requires **HTTPS** (or localhost) and camera permission.
+- Live capture uses the browser's video track. Resolution is shown in the
+  header; it is often 1080p, and 4K where the browser and camera provide it.
+  Use `Photos` when you need the phone's full-resolution still image.
+- The preview fills the screen; the captured photo contains the full video
+  frame, so it can include a little more at the edges than the preview.
+- If `getUserMedia` is unavailable, permission is denied, or the camera is busy,
+  the app shows `Try again`, `Phone camera` (native capture fallback), and
+  `Photos` actions.
+- `Rotate` in the editor rotates the working image 90° clockwise. Use it if a
+  browser/device reports video orientation differently than the preview.
 
 ## Grain model
 
@@ -134,6 +156,13 @@ Settings stay in `localStorage`; the app shell is cached for offline use.
 
 - Applies grain to a **rendered image**, not to RAW data; it is not a RAW
   developer.
+- Live camera capture uses the browser's video track, not the camera's native
+  still pipeline. Use `Photos` for full-resolution stills. Camera access needs
+  HTTPS and permission; the native capture fallback still shows the phone's
+  own "Use Photo" step.
+- Video orientation differs between browsers and devices. The app rotates
+  iOS landscape video frames to match the device orientation and provides a
+  `Rotate` button for any remaining mismatch.
 - HEIC decoding depends on the browser (Safari works; Chrome often does not).
   Use a JPEG export if the image fails to load.
 - Default working resolution is 4096 px long edge. `Original` is bounded by the

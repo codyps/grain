@@ -51,8 +51,12 @@
           </div>
         </div>
         <div class="stage-bar">
-          <button id="compareBtn" class="ghost" type="button" disabled
-                  aria-pressed="false" title="Show the original">Compare</button>
+          <div class="stage-actions">
+            <button id="compareBtn" class="ghost" type="button" disabled
+                    aria-pressed="false" title="Show the original">Compare</button>
+            <button id="rotateBtn" class="ghost" type="button" disabled
+                    title="Rotate 90° clockwise">Rotate</button>
+          </div>
           <span id="status" class="status" aria-live="polite">Ready</span>
         </div>
         <div class="notes">
@@ -160,6 +164,54 @@
       </button>
     </nav>
   </div>
+
+  <section id="cameraView" class="camera" hidden aria-label="Camera">
+    <video id="cameraVideo" playsinline webkit-playsinline autoplay muted></video>
+    <div class="camera-grid" aria-hidden="true"></div>
+    <div class="camera-top">
+      <button id="cameraClose" class="camera-btn" type="button" aria-label="Close camera">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 6l12 12M18 6 6 18"/>
+        </svg>
+      </button>
+      <span id="cameraStatus" class="camera-status">Camera</span>
+      <button id="cameraFlip" class="camera-btn" type="button" aria-label="Switch camera">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M20 11a8 8 0 0 0-14-4L4 9"/>
+          <path d="M4 4v5h5"/>
+          <path d="M4 13a8 8 0 0 0 14 4l2-2"/>
+          <path d="M20 20v-5h-5"/>
+        </svg>
+      </button>
+    </div>
+    <div class="camera-bottom">
+      <button id="cameraPhotos" class="camera-btn" type="button" aria-label="Choose from photos">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="16" rx="2"/>
+          <circle cx="8.5" cy="9" r="1.5"/>
+          <path d="m4 17 5-5 4 4 2-2 5 5"/>
+        </svg>
+      </button>
+      <button id="cameraShutter" class="shutter" type="button" aria-label="Take photo" disabled></button>
+      <span class="camera-side" aria-hidden="true"></span>
+    </div>
+    <div id="cameraLoading" class="camera-loading" hidden>
+      <span class="spinner" aria-hidden="true"></span>
+      <span>Starting camera…</span>
+    </div>
+    <div id="cameraError" class="camera-error" hidden>
+      <div class="camera-error-card">
+        <strong>Camera unavailable</strong>
+        <p id="cameraErrorText">Could not start the camera.</p>
+        <div class="camera-error-actions">
+          <button id="cameraRetry" class="ghost small" type="button">Try again</button>
+          <button id="cameraFallback" class="ghost small" type="button">Phone camera</button>
+          <button id="cameraErrorPhotos" class="ghost small" type="button">Photos</button>
+          <button id="cameraErrorClose" class="ghost small" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden>
   <input id="galleryInput" type="file" accept="image/*" hidden>

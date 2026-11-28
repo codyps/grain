@@ -33,6 +33,8 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+body.camera-open { overflow: hidden; }
+
 [hidden] { display: none !important; }
 
 .app {
@@ -240,6 +242,13 @@ body {
   gap: 12px;
   padding: 12px 4px 2px;
   flex-wrap: wrap;
+}
+
+.stage-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
 }
 
 .stage-bar .ghost { flex: none; }
@@ -604,6 +613,193 @@ button {
 }
 
 .dock .primary:hover { background: var(--accent-2); }
+
+/* ---------- Camera ---------- */
+
+.camera {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+  touch-action: none;
+}
+
+.camera video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+
+.camera video.front { transform: scaleX(-1); }
+
+.camera-grid {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.35;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.55) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.55) 1px, transparent 1px);
+  background-size: 33.333% 33.333%;
+  background-position: -1px -1px;
+}
+
+.camera-top,
+.camera-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.camera-top {
+  top: 0;
+  padding-top: calc(14px + env(safe-area-inset-top));
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.65), transparent);
+}
+
+.camera-bottom {
+  bottom: 0;
+  padding-bottom: calc(22px + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.75), transparent);
+}
+
+.camera-status {
+  flex: 1 1 auto;
+  text-align: center;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.78);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+
+.camera-btn {
+  appearance: none;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.camera-btn:active { transform: scale(0.95); }
+
+.camera-btn svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.shutter {
+  appearance: none;
+  width: 78px;
+  height: 78px;
+  flex: none;
+  padding: 5px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.9);
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.shutter::after {
+  content: "";
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+
+.shutter:active::after { transform: scale(0.88); }
+.shutter:disabled { opacity: 0.45; cursor: default; }
+.shutter:disabled::after { background: rgba(255, 255, 255, 0.6); }
+
+.camera-side {
+  width: 44px;
+  height: 44px;
+  flex: none;
+}
+
+.camera-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+  pointer-events: none;
+}
+
+.camera-error {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.camera-error-card {
+  width: min(100%, 380px);
+  padding: 22px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: #16161a;
+  box-shadow: var(--shadow);
+}
+
+.camera-error-card strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 16px;
+}
+
+.camera-error-card p {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.camera-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 
 /* ---------- Focus ---------- */
 
