@@ -47,13 +47,20 @@
   const $ = (id) => document.getElementById(id);
 
   const els = {
+    app: $('app'),
+    viewer: $('viewer'),
+    frame: $('frame'),
     view: $('view'),
     original: $('original'),
     canvasWrap: $('canvasWrap'),
     empty: $('empty'),
+    emptyCamera: $('emptyCamera'),
+    emptyPhotos: $('emptyPhotos'),
     busy: $('busy'),
-    status: $('status'),
+    toast: $('toast'),
     compareBtn: $('compareBtn'),
+    fitBtn: $('fitBtn'),
+    zoomLabel: $('zoomLabel'),
     rotateBtn: $('rotateBtn'),
     saveBtn: $('saveBtn'),
     takeBtn: $('takeBtn'),
@@ -76,27 +83,34 @@
     cameraErrorClose: $('cameraErrorClose'),
     amount: $('amount'),
     amountOut: $('amountOut'),
+    barAmount: $('barAmount'),
+    sizeValue: $('sizeValue'),
+    strengthValue: $('strengthValue'),
+    filmValue: $('filmValue'),
     seedOut: $('seedOut'),
     shuffleBtn: $('shuffleBtn'),
     tone: $('tone'),
     resolution: $('resolution'),
     resetBtn: $('resetBtn'),
     installBtn: $('installBtn'),
+    installRow: $('installRow'),
     iosHint: $('iosHint'),
+    info: $('info'),
   };
 
   let state = loadSettings();
-  let source = null;        // { bitmap, w, h, url? }
+  let source = null;        // { bitmap, w, h, rotation, url? }
   let work = null;          // { canvas, w, h }
   let renderer = null;
   let renderTimer = 0;
-  let statusTimer = 0;
+  let toastTimer = 0;
   let busyCount = 0;
   let cameraStream = null;
   let cameraFacing = 'environment';
   let cameraActive = false;
   let cameraStarting = false;
   let cameraRequest = 0;
+  const viewState = { scale: 1, x: 0, y: 0 };
 
   // ---------------------------------------------------------------- settings
 
@@ -452,11 +466,11 @@
   async function handleFile(file) {
     if (!file) return;
     if (!renderer || !renderer.ok) {
-      setStatus(renderer ? renderer.error : 'WebGL is not available.');
+      showToast(renderer ? renderer.error : 'WebGL is not available.');
       return;
     }
     setBusy(true);
-    setStatus('Loading…');
+    closeSheets();
     try {
       const next = await decodeFile(file);
       if (source && source.url) URL.revokeObjectURL(source.url);
@@ -467,7 +481,7 @@
         prepare();
       } catch (err) {
         if (state.maxEdge === 0 || state.maxEdge > 4096) {
-          setStatus('Image too large; retrying at 4096 px…');
+          showToast('Image too large; retrying at 4096 px…');
           const old = state.maxEdge;
           state.maxEdge = 4096;
           saveSettings();
@@ -478,24 +492,22 @@
         }
       }
 
+      document.body.classList.add('has-image');
       els.canvasWrap.hidden = false;
       els.empty.hidden = true;
       els.compareBtn.disabled = false;
       els.rotateBtn.disabled = false;
       els.saveBtn.disabled = false;
-      els.takeBtn.classList.remove('primary');
-      els.saveBtn.classList.add('primary');
       showOriginal(false);
-      els.compareBtn.textContent = 'Compare';
-      els.compareBtn.setAttribute('aria-pressed', 'false');
       render();
       updateStatus();
+      requestAnimationFrame(resetView);
     } catch (err) {
       console.error(err);
       const msg = err && err.message === 'decode'
         ? 'Could not read that image. Try a JPEG export.'
         : (err && err.message) || 'Could not process that image.';
-      setStatus(msg);
+      showToast(msg);
     } finally {
       setBusy(false);
     }
@@ -504,7 +516,7 @@
   function render() {
     if (!work || !source) return;
     if (!renderer || !renderer.ok) {
-      setStatus(renderer ? renderer.error : 'WebGL is not available.');
+      showToast(renderer ? renderer.error : 'WebGL is not available.');
       return;
     }
     const p = modelParams(state.size, state.strength, state.film);
@@ -527,6 +539,9 @@
   function showOriginal(on) {
     if (!work) return;
     els.original.hidden = !on;
+    els.compareBtn.classList.toggle('active', on);
+    els.compareBtn.setAttribute('aria-pressed', String(on));
+    els.compareBtn.title = on ? 'Show grain' : 'Show original';
   }
 
   function rotateImage() {
@@ -538,11 +553,10 @@
       render();
       updateStatus();
       showOriginal(false);
-      els.compareBtn.textContent = 'Compare';
-      els.compareBtn.setAttribute('aria-pressed', 'false');
+      requestAnimationFrame(resetView);
     } catch (err) {
       console.error(err);
-      setStatus('Could not rotate the image.');
+      showToast('Could not rotate the image.');
     } finally {
       setBusy(false);
     }
@@ -619,6 +633,7 @@
   }
 
   async function openCamera() {
+    closeSheets();
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       els.cameraInput.click();
       return;
@@ -788,25 +803,24 @@
     els.busy.hidden = busyCount === 0;
   }
 
-  function setStatus(text) {
-    els.status.textContent = text;
-  }
-
-  function flashStatus(text) {
-    clearTimeout(statusTimer);
-    setStatus(text);
-    statusTimer = setTimeout(() => {
-      if (work && source) updateStatus();
-    }, 3000);
+  function showToast(text, ms = 2600) {
+    clearTimeout(toastTimer);
+    els.toast.textContent = text;
+    els.toast.hidden = false;
+    toastTimer = setTimeout(() => { els.toast.hidden = true; }, ms);
   }
 
   function updateStatus() {
-    if (!work || !source) return;
+    if (!els.info) return;
+    if (!work || !source) {
+      els.info.textContent = '';
+      return;
+    }
     const size = sourceSize();
     const dims = (work.w === size.w && work.h === size.h)
       ? `${work.w} × ${work.h}`
       : `${size.w} × ${size.h} → ${work.w} × ${work.h}`;
-    setStatus(`${dims} · ${modelLabel()}`);
+    els.info.textContent = `${dims} · ${modelLabel()}`;
   }
 
   function syncUI() {
@@ -832,10 +846,178 @@
     });
     els.amount.value = String(state.amount);
     els.amountOut.textContent = `${state.amount}%`;
+    els.barAmount.textContent = `${state.amount}%`;
+    els.sizeValue.textContent = state.size === 'small' ? 'Small' : 'Large';
+    els.strengthValue.textContent = state.strength === 'weak' ? 'Weak' : 'Strong';
+    els.filmValue.textContent = state.film === 'acros' ? 'Acros' : 'Color';
     els.seedOut.textContent = String(state.seed);
     els.tone.checked = state.tone;
     els.resolution.value = String(state.maxEdge);
     updateStatus();
+  }
+
+  function closeSheets() {
+    document.querySelectorAll('.control-sheet').forEach((sheet) => { sheet.hidden = true; });
+    document.querySelectorAll('[data-open-sheet]').forEach((btn) => btn.classList.remove('active'));
+  }
+
+  function toggleSheet(name, button) {
+    const sheet = document.querySelector(`.control-sheet[data-sheet="${name}"]`);
+    if (!sheet) return;
+    const wasHidden = sheet.hidden;
+    closeSheets();
+    if (wasHidden) {
+      sheet.hidden = false;
+      button.classList.add('active');
+    }
+  }
+
+  function resetView() {
+    viewState.scale = 1;
+    viewState.x = 0;
+    viewState.y = 0;
+    applyView();
+  }
+
+  function applyView() {
+    els.canvasWrap.style.transform =
+      `translate3d(${viewState.x}px, ${viewState.y}px, 0) scale(${viewState.scale})`;
+    const zoomed = viewState.scale > 1.01;
+    els.zoomLabel.hidden = !zoomed;
+    if (zoomed) els.zoomLabel.textContent = `${viewState.scale.toFixed(1)}×`;
+  }
+
+  function clampView() {
+    if (!work) return;
+    const vw = els.frame.clientWidth;
+    const vh = els.frame.clientHeight;
+    const bw = els.canvasWrap.offsetWidth;
+    const bh = els.canvasWrap.offsetHeight;
+    const maxX = Math.max(0, (bw * viewState.scale - vw) / 2);
+    const maxY = Math.max(0, (bh * viewState.scale - vh) / 2);
+    viewState.x = Math.max(-maxX, Math.min(maxX, viewState.x));
+    viewState.y = Math.max(-maxY, Math.min(maxY, viewState.y));
+  }
+
+  function bindViewer() {
+    const frame = els.frame;
+    const pointers = new Map();
+    let dragStart = null;
+    let pinchStart = null;
+    let lastTap = 0;
+    let lastTapX = 0;
+    let lastTapY = 0;
+
+    const centerPoint = (clientX, clientY) => {
+      const rect = frame.getBoundingClientRect();
+      return {
+        x: clientX - rect.left - rect.width / 2,
+        y: clientY - rect.top - rect.height / 2,
+      };
+    };
+
+    const zoomAt = (clientX, clientY, factor) => {
+      const p = centerPoint(clientX, clientY);
+      const next = Math.max(1, Math.min(8, viewState.scale * factor));
+      const k = next / viewState.scale;
+      viewState.x = p.x - k * (p.x - viewState.x);
+      viewState.y = p.y - k * (p.y - viewState.y);
+      viewState.scale = next;
+      clampView();
+      applyView();
+    };
+
+    const toggleZoom = (clientX, clientY) => {
+      if (viewState.scale > 1.01) {
+        resetView();
+        return;
+      }
+      const p = centerPoint(clientX, clientY);
+      const next = 2.5;
+      viewState.scale = next;
+      viewState.x = p.x - next * p.x;
+      viewState.y = p.y - next * p.y;
+      clampView();
+      applyView();
+    };
+
+    frame.addEventListener('pointerdown', (e) => {
+      if (!work || e.target.closest('button')) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      frame.setPointerCapture(e.pointerId);
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (pointers.size === 1) {
+        dragStart = { x: e.clientX, y: e.clientY, vx: viewState.x, vy: viewState.y };
+        const now = performance.now();
+        if (now - lastTap < 320 &&
+            Math.hypot(e.clientX - lastTapX, e.clientY - lastTapY) < 28) {
+          toggleZoom(e.clientX, e.clientY);
+          dragStart = null;
+          lastTap = 0;
+        } else {
+          lastTap = now;
+          lastTapX = e.clientX;
+          lastTapY = e.clientY;
+        }
+      } else if (pointers.size === 2) {
+        const pts = [...pointers.values()];
+        pinchStart = {
+          dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
+          mid: { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 },
+          scale: viewState.scale,
+          x: viewState.x,
+          y: viewState.y,
+        };
+        dragStart = null;
+      }
+    });
+
+    frame.addEventListener('pointermove', (e) => {
+      if (!pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (pointers.size === 1 && dragStart) {
+        viewState.x = dragStart.vx + (e.clientX - dragStart.x);
+        viewState.y = dragStart.vy + (e.clientY - dragStart.y);
+        clampView();
+        applyView();
+      } else if (pointers.size === 2 && pinchStart) {
+        const pts = [...pointers.values()];
+        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+        const ratio = pinchStart.dist > 0 ? dist / pinchStart.dist : 1;
+        const next = Math.max(1, Math.min(8, pinchStart.scale * ratio));
+        const k = next / pinchStart.scale;
+        const startMid = centerPoint(pinchStart.mid.x, pinchStart.mid.y);
+        const nowMid = centerPoint(mid.x, mid.y);
+        viewState.scale = next;
+        viewState.x = nowMid.x - k * (startMid.x - pinchStart.x);
+        viewState.y = nowMid.y - k * (startMid.y - pinchStart.y);
+        clampView();
+        applyView();
+      }
+    });
+
+    const endPointer = (e) => {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinchStart = null;
+      if (pointers.size === 0) dragStart = null;
+    };
+    frame.addEventListener('pointerup', endPointer);
+    frame.addEventListener('pointercancel', endPointer);
+
+    frame.addEventListener('wheel', (e) => {
+      if (!work) return;
+      e.preventDefault();
+      zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015));
+    }, { passive: false });
+
+    window.addEventListener('resize', () => {
+      if (!work) return;
+      clampView();
+      applyView();
+    });
   }
 
   function bind() {
@@ -874,6 +1056,7 @@
     els.amount.addEventListener('input', () => {
       state.amount = Math.max(0, Math.min(200, Number(els.amount.value) || 0));
       els.amountOut.textContent = `${state.amount}%`;
+      els.barAmount.textContent = `${state.amount}%`;
       saveSettings();
       scheduleRender();
     });
@@ -900,9 +1083,11 @@
           prepare();
           render();
           updateStatus();
+          closeSheets();
+          requestAnimationFrame(resetView);
         } catch (err) {
           console.error(err);
-          setStatus('Could not resize; try 4096 px.');
+          showToast('Could not resize; try 4096 px.');
         } finally {
           setBusy(false);
         }
@@ -914,10 +1099,14 @@
       saveSettings();
       syncUI();
       render();
+      closeSheets();
+      requestAnimationFrame(resetView);
     });
 
     els.takeBtn.addEventListener('click', openCamera);
     els.chooseBtn.addEventListener('click', () => els.galleryInput.click());
+    els.emptyCamera.addEventListener('click', openCamera);
+    els.emptyPhotos.addEventListener('click', () => els.galleryInput.click());
 
     const onPick = (input) => {
       input.addEventListener('change', () => {
@@ -929,6 +1118,18 @@
     onPick(els.cameraInput);
     onPick(els.galleryInput);
 
+    document.querySelectorAll('[data-open-sheet]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleSheet(btn.dataset.openSheet, btn);
+      });
+    });
+
+    document.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('.control-sheet') || e.target.closest('[data-open-sheet]')) return;
+      closeSheets();
+    });
+
     els.cameraClose.addEventListener('click', closeCamera);
     els.cameraShutter.addEventListener('click', capturePhoto);
     els.cameraFlip.addEventListener('click', flipCamera);
@@ -939,7 +1140,12 @@
     els.cameraErrorClose.addEventListener('click', closeCamera);
 
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && cameraActive) closeCamera();
+      if (e.key !== 'Escape') return;
+      if (document.querySelector('.control-sheet:not([hidden])')) {
+        closeSheets();
+      } else if (cameraActive) {
+        closeCamera();
+      }
     });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden && cameraActive && !cameraStarting) closeCamera();
@@ -948,27 +1154,23 @@
       if (cameraActive) closeCamera();
     });
 
-    els.compareBtn.addEventListener('click', () => {
-      const show = els.original.hidden;
-      showOriginal(show);
-      els.compareBtn.setAttribute('aria-pressed', String(show));
-      els.compareBtn.textContent = show ? 'Show grain' : 'Compare';
+    els.compareBtn.addEventListener('click', () => showOriginal(els.original.hidden));
+    els.fitBtn.addEventListener('click', resetView);
+    els.rotateBtn.addEventListener('click', () => {
+      rotateImage();
+      closeSheets();
     });
-
-    els.rotateBtn.addEventListener('click', rotateImage);
-
     els.saveBtn.addEventListener('click', saveImage);
 
     // Desktop drag and drop.
-    const frame = $('frame');
-    frame.addEventListener('dragover', (e) => {
+    els.frame.addEventListener('dragover', (e) => {
       e.preventDefault();
-      frame.classList.add('dragover');
+      els.frame.classList.add('dragover');
     });
-    frame.addEventListener('dragleave', () => frame.classList.remove('dragover'));
-    frame.addEventListener('drop', (e) => {
+    els.frame.addEventListener('dragleave', () => els.frame.classList.remove('dragover'));
+    els.frame.addEventListener('drop', (e) => {
       e.preventDefault();
-      frame.classList.remove('dragover');
+      els.frame.classList.remove('dragover');
       const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
       if (file && file.type.startsWith('image/')) handleFile(file);
     });
@@ -988,7 +1190,7 @@
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
           await navigator.share({ files: [file], title: 'Grain' });
-          flashStatus(`Shared ${ext.toUpperCase()}`);
+          showToast(`Shared ${ext.toUpperCase()}`);
           return;
         } catch (err) {
           if (err && err.name === 'AbortError') return;
@@ -1002,10 +1204,10 @@
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
-      flashStatus(`Saved ${ext.toUpperCase()}`);
+      showToast(`Saved ${ext.toUpperCase()}`);
     } catch (err) {
       console.error(err);
-      setStatus('Could not save the image.');
+      showToast('Could not save the image.');
     } finally {
       setBusy(false);
     }
@@ -1024,6 +1226,7 @@
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       deferred = e;
+      els.installRow.hidden = false;
       els.installBtn.hidden = false;
     });
     els.installBtn.addEventListener('click', async () => {
@@ -1031,9 +1234,11 @@
       deferred.prompt();
       try { await deferred.userChoice; } catch (_) { /* ignore */ }
       deferred = null;
+      els.installRow.hidden = true;
       els.installBtn.hidden = true;
     });
     window.addEventListener('appinstalled', () => {
+      els.installRow.hidden = true;
       els.installBtn.hidden = true;
     });
 
@@ -1048,12 +1253,13 @@
   function boot() {
     renderer = new GrainRenderer(els.view);
     if (!renderer.ok) {
-      setStatus(renderer.error || 'WebGL is not available.');
+      showToast(renderer.error || 'WebGL is not available.');
       els.empty.querySelector('strong').textContent = 'WebGL required';
       els.empty.querySelector('span').textContent =
         'This browser cannot run the grain renderer. Try Safari, Chrome, or Firefox on a recent device.';
     }
     bind();
+    bindViewer();
     syncUI();
     saveSettings();
     initPWA();

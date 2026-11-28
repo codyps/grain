@@ -16,154 +16,207 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="app">
-    <header class="topbar">
-      <div class="brand">
-        <span class="mark" aria-hidden="true"></span>
-        <div class="brand-text">
-          <h1>GRAIN</h1>
-          <p>X-T4 film grain</p>
+  <div class="app" id="app">
+    <main class="viewer" id="viewer" aria-label="Photo editor">
+      <div class="viewer-frame" id="frame">
+        <div class="canvas-wrap" id="canvasWrap" hidden>
+          <canvas id="view"></canvas>
+          <canvas id="original" hidden></canvas>
+        </div>
+
+        <div class="empty" id="empty">
+          <div class="empty-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M4 7h3l1.4-2h7.2L17 7h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1Z"/>
+              <circle cx="12" cy="13" r="4"/>
+            </svg>
+          </div>
+          <strong>Open a photo</strong>
+          <span>Camera or library. Pinch to zoom, drag to pan, double-tap to reset.</span>
+          <div class="empty-actions">
+            <button id="emptyCamera" class="primary" type="button">Camera</button>
+            <button id="emptyPhotos" class="ghost" type="button">Photos</button>
+          </div>
+        </div>
+
+        <div class="busy" id="busy" hidden>
+          <span class="spinner" aria-hidden="true"></span>
+          <span>Processing…</span>
         </div>
       </div>
-      <button id="installBtn" class="ghost" type="button" hidden>Install</button>
-    </header>
 
-    <p id="iosHint" class="ios-hint" hidden>Install on iPhone or iPad: tap Share, then <strong>Add to Home Screen</strong>.</p>
-
-    <main class="layout">
-      <section class="stage card" aria-label="Preview">
-        <div class="frame" id="frame">
-          <div class="canvas-wrap" id="canvasWrap" hidden>
-            <canvas id="view"></canvas>
-            <canvas id="original" hidden></canvas>
-          </div>
-          <div class="empty" id="empty">
+      <header class="hud hud-top">
+        <div class="brand-mini">
+          <span class="mark" aria-hidden="true"></span>
+          <span>GRAIN</span>
+        </div>
+        <div class="hud-actions">
+          <button id="takeBtn" class="hud-btn" type="button" aria-label="Open camera" title="Camera">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4 7h3l1.4-2h7.2L17 7h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1Z"/>
               <circle cx="12" cy="13" r="4"/>
             </svg>
-            <strong>No photo yet</strong>
-            <span>Take a photo or choose one from your library.</span>
-          </div>
-          <div class="busy" id="busy" hidden>
-            <span class="spinner" aria-hidden="true"></span>
-            <span>Processing…</span>
-          </div>
+          </button>
+          <button id="chooseBtn" class="hud-btn" type="button" aria-label="Choose from photos" title="Photos">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="16" rx="2"/>
+              <circle cx="8.5" cy="9" r="1.5"/>
+              <path d="m4 17 5-5 4 4 2-2 5 5"/>
+            </svg>
+          </button>
+          <button id="saveBtn" class="hud-btn primary" type="button" aria-label="Save photo" title="Save" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 4v11"/>
+              <path d="m8 11 4 4 4-4"/>
+              <path d="M5 19h14"/>
+            </svg>
+          </button>
         </div>
-        <div class="stage-bar">
-          <div class="stage-actions">
-            <button id="compareBtn" class="ghost" type="button" disabled
-                    aria-pressed="false" title="Show the original">Compare</button>
-            <button id="rotateBtn" class="ghost" type="button" disabled
-                    title="Rotate 90° clockwise">Rotate</button>
-          </div>
-          <span id="status" class="status" aria-live="polite">Ready</span>
-        </div>
-        <div class="notes">
-          <span class="notes-title">Measured X-T4 model</span>
-          <span>Small: 5-tap band-pass · Large: 3-tap low-pass · tone-aware</span>
-          <span>Calibrated ISO 400 · Provia · DR100</span>
-        </div>
-      </section>
+      </header>
 
-      <section class="panel card" aria-label="Controls">
-        <div class="control">
-          <div class="control-head"><span>Size</span><small>grain scale</small></div>
+      <div class="viewer-actions">
+        <span id="zoomLabel" class="zoom-label" hidden>1×</span>
+        <button id="fitBtn" class="float-btn" type="button" aria-label="Reset zoom" title="Fit image">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/>
+          </svg>
+        </button>
+        <button id="compareBtn" class="float-btn" type="button" aria-label="Compare with original"
+                aria-pressed="false" title="Show original" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+        </button>
+      </div>
+
+      <div id="toast" class="toast" hidden aria-live="polite"></div>
+
+      <nav class="hud hud-bottom" aria-label="Grain settings">
+        <div class="toolbar" role="toolbar">
+          <button class="tool" type="button" data-open-sheet="size" aria-label="Grain size">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="6" cy="12" r="1.2"/>
+              <circle cx="12" cy="12" r="2"/>
+              <circle cx="18" cy="12" r="2.8"/>
+            </svg>
+            <span class="tool-label">Size</span>
+            <small class="tool-value" id="sizeValue">Large</small>
+          </button>
+          <button class="tool" type="button" data-open-sheet="strength" aria-label="Grain strength">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 19V9M12 19V5M19 19v-7"/>
+            </svg>
+            <span class="tool-label">Strength</span>
+            <small class="tool-value" id="strengthValue">Strong</small>
+          </button>
+          <button class="tool" type="button" data-open-sheet="amount" aria-label="Grain amount">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 8h16M4 16h16"/>
+              <circle cx="9" cy="8" r="2"/>
+              <circle cx="15" cy="16" r="2"/>
+            </svg>
+            <span class="tool-label">Amount</span>
+            <small class="tool-value" id="barAmount">100%</small>
+          </button>
+          <button class="tool" type="button" data-open-sheet="film" aria-label="Film profile">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="5" width="18" height="14" rx="2"/>
+              <path d="M7 5v14M17 5v14M3 9h4M3 15h4M17 9h4M17 15h4"/>
+            </svg>
+            <span class="tool-label">Film</span>
+            <small class="tool-value" id="filmValue">Color</small>
+          </button>
+          <button class="tool" type="button" data-open-sheet="more" aria-label="More settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/>
+            </svg>
+            <span class="tool-label">More</span>
+          </button>
+        </div>
+      </nav>
+
+      <div class="sheets" id="sheets">
+        <section class="control-sheet" data-sheet="size" hidden aria-label="Grain size">
+          <div class="sheet-head"><span>Size</span><small>grain scale</small></div>
           <div class="seg" role="group" aria-label="Grain size">
             <button type="button" data-size="small">Small</button>
             <button type="button" data-size="large" class="active">Large</button>
           </div>
-        </div>
+          <p class="sheet-hint">Small: finer speckle · Large: softer, larger grain</p>
+        </section>
 
-        <div class="control">
-          <div class="control-head"><span>Strength</span><small>amplitude</small></div>
+        <section class="control-sheet" data-sheet="strength" hidden aria-label="Grain strength">
+          <div class="sheet-head"><span>Strength</span><small>amplitude</small></div>
           <div class="seg" role="group" aria-label="Grain strength">
             <button type="button" data-strength="weak">Weak</button>
             <button type="button" data-strength="strong" class="active">Strong</button>
           </div>
-        </div>
+          <p class="sheet-hint">Strong is about twice the amplitude of Weak.</p>
+        </section>
 
-        <div class="control">
-          <div class="control-head"><label for="amount">Amount</label><output id="amountOut" for="amount">100%</output></div>
+        <section class="control-sheet" data-sheet="amount" hidden aria-label="Grain amount">
+          <div class="sheet-head"><span>Amount</span><output id="amountOut" for="amount">100%</output></div>
           <input id="amount" type="range" min="0" max="200" step="5" value="100">
           <div class="range-scale" aria-hidden="true"><span>0%</span><span>100%</span><span>200%</span></div>
-          <div class="hint">100% = measured X-T4 amplitude</div>
-        </div>
+          <p class="sheet-hint">100% = measured X-T4 amplitude.</p>
+        </section>
 
-        <div class="control">
-          <div class="control-head"><span>Film</span><small>grain profile</small></div>
+        <section class="control-sheet" data-sheet="film" hidden aria-label="Film profile">
+          <div class="sheet-head"><span>Film</span><small>grain profile</small></div>
           <div class="seg" role="group" aria-label="Film grain profile">
             <button type="button" data-film="color" class="active">Color</button>
             <button type="button" data-film="acros">Acros</button>
           </div>
-          <div class="hint">Acros/B&amp;W: 0.86× amplitude, tighter Large kernel</div>
-        </div>
+          <p class="sheet-hint">Acros/B&amp;W: slightly finer, lower-amplitude grain</p>
+        </section>
 
-        <div class="control">
-          <div class="control-head"><span>Seed</span><output id="seedOut">517</output></div>
-          <div class="row">
-            <button id="shuffleBtn" class="ghost small" type="button">Shuffle</button>
-            <span class="hint">same seed = same grain pattern</span>
+        <section class="control-sheet sheet-more" data-sheet="more" hidden aria-label="More settings">
+          <div class="sheet-head"><span>More</span><small>output & detail</small></div>
+          <div class="more-list">
+            <div class="more-row">
+              <span>Seed</span>
+              <div class="row"><output id="seedOut">517</output><button id="shuffleBtn" class="ghost small" type="button">Shuffle</button></div>
+            </div>
+            <label class="switch">
+              <span>Camera tone response<small>suppress blacks, roll off highlights</small></span>
+              <input id="tone" type="checkbox" checked>
+              <i aria-hidden="true"></i>
+            </label>
+            <div class="more-row">
+              <span>Resolution</span>
+              <select id="resolution">
+                <option value="2048">2048 px · fast</option>
+                <option value="3072">3072 px</option>
+                <option value="4096">4096 px</option>
+                <option value="0" selected>Original</option>
+              </select>
+            </div>
+            <p class="sheet-hint">Original uses the full image; 2048 px is faster on older phones.</p>
+            <div class="more-row">
+              <span>Save as</span>
+              <div class="seg small" role="group" aria-label="Save format">
+                <button type="button" data-format="jpeg" class="active">JPEG</button>
+                <button type="button" data-format="png">PNG</button>
+              </div>
+            </div>
+            <div class="more-row">
+              <span>Orientation</span>
+              <button id="rotateBtn" class="ghost small" type="button" disabled>Rotate 90°</button>
+            </div>
+            <div id="installRow" class="more-row" hidden>
+              <span>Install</span>
+              <button id="installBtn" class="ghost small" type="button">Install app</button>
+            </div>
+            <p id="iosHint" class="sheet-note" hidden>On iPhone or iPad: Share → <strong>Add to Home Screen</strong>.</p>
+            <div class="more-row">
+              <button id="resetBtn" class="ghost small" type="button">Reset settings</button>
+            </div>
+            <p id="info" class="sheet-info"></p>
           </div>
-        </div>
-
-        <label class="switch">
-          <span>Camera tone response<small>suppress blacks, roll off highlights</small></span>
-          <input id="tone" type="checkbox" checked>
-          <i aria-hidden="true"></i>
-        </label>
-
-        <div class="control">
-          <div class="control-head"><label for="resolution">Resolution</label><small>working size</small></div>
-          <select id="resolution">
-            <option value="2048">2048 px · fast</option>
-            <option value="3072">3072 px</option>
-            <option value="4096">4096 px</option>
-            <option value="0" selected>Original</option>
-          </select>
-          <div class="hint">Original uses the full image; 2048 px is faster on older phones.</div>
-        </div>
-
-        <div class="control">
-          <div class="control-head"><span>Save as</span><small>format</small></div>
-          <div class="seg" role="group" aria-label="Save format">
-            <button type="button" data-format="jpeg" class="active">JPEG</button>
-            <button type="button" data-format="png">PNG</button>
-          </div>
-        </div>
-
-        <div class="panel-foot">
-          <button id="resetBtn" class="ghost small" type="button">Reset settings</button>
-          <span class="hint">Everything stays on this device.</span>
-        </div>
-      </section>
+        </section>
+      </div>
     </main>
-
-    <nav class="dock" aria-label="Photo actions">
-      <button id="takeBtn" class="primary" type="button">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 7h3l1.4-2h7.2L17 7h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1Z"/>
-          <circle cx="12" cy="13" r="4"/>
-        </svg>
-        <span>Camera</span>
-      </button>
-      <button id="chooseBtn" type="button">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="3" y="4" width="18" height="16" rx="2"/>
-          <circle cx="8.5" cy="9" r="1.5"/>
-          <path d="m4 17 5-5 4 4 2-2 5 5"/>
-        </svg>
-        <span>Photos</span>
-      </button>
-      <button id="saveBtn" type="button" disabled>
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 4v11"/>
-          <path d="m8 11 4 4 4-4"/>
-          <path d="M5 19h14"/>
-        </svg>
-        <span>Save</span>
-      </button>
-    </nav>
   </div>
 
   <section id="cameraView" class="camera" hidden aria-label="Camera">

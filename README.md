@@ -5,21 +5,31 @@ effect to photos. It runs entirely in the browser: no uploads, no account.
 
 ## Features
 
+- **Full-screen viewer**: the image fills the screen. Pinch or scroll to zoom,
+  drag to pan, double-tap or `Fit` to reset.
+- **Quick compare**: a floating eye button toggles the original without leaving
+  the image.
+- **Compact tool tray**: `Size`, `Strength`, `Amount`, `Film`, and `More`; each
+  opens a small popover sheet so the image stays visible.
+- **Top actions**: camera, photos, and save.
 - **Live camera or library**: `Camera` opens an in-app live preview with a
   shutter, flip, and gallery shortcut; `Photos` opens the photo picker. On
   browsers that support `getUserMedia`, there is no native "Use Photo" step.
 - **Local processing**: WebGL shader, no server.
-- **Controls**: Small/Large grain, Weak/Strong strength, Color/Acros film
-  profile, Amount 0–200%, Seed + Shuffle, Camera tone response, working
-  resolution, JPEG/PNG.
-- **Compare** toggle against the original.
-- **Rotate**: rotate the working image 90° clockwise.
+- **Rotate**: rotate the working image 90° clockwise from `More`.
 - **Installable PWA**: Android install prompt; iOS Add to Home Screen.
 - **Offline**: the app shell is cached by a service worker.
 - **Persistent settings**: size, strength, film, amount, seed, tone, resolution
   and format are stored in `localStorage`.
-- **App shell**: the header and action dock stay fixed; only the content area
-  scrolls.
+
+## Viewer
+
+The photo is the main surface. Pinch or use the mouse wheel to zoom from 1× to
+8×, drag to pan, double-tap to reset, or tap the fit button. The eye button
+switches between the grain and the original. The bottom tray always shows the
+current size, strength, amount, and film; tapping a tool opens a compact sheet
+above it. `More` contains seed, tone response, resolution, save format, rotate,
+install, and reset.
 
 ## Camera
 
