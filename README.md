@@ -13,8 +13,9 @@ effect to photos. It runs entirely in the browser: no uploads, no account.
   opens a small popover sheet so the image stays visible.
 - **Top actions**: camera, photos, and save.
 - **Live camera or library**: `Camera` opens an in-app live preview with a
-  shutter, flip, and gallery shortcut; `Photos` opens the photo picker. On
-  browsers that support `getUserMedia`, there is no native "Use Photo" step.
+  shutter, lens picker, zoom presets, and gallery shortcut; `Photos` opens the
+  photo picker. On browsers that support `getUserMedia`, there is no native
+  "Use Photo" step.
 - **Local processing**: WebGL shader, no server.
 - **Rotate**: rotate the working image 90° clockwise from `More`.
 - **Installable PWA**: Android install prompt; iOS Add to Home Screen.
@@ -35,14 +36,19 @@ install, and reset.
 
 `Camera` requests the rear camera with `getUserMedia` and shows a full-screen
 live preview. The shutter captures the current video frame, closes the camera,
-and loads the photo into the editor. The flip button switches between rear and
-front cameras; the photo button opens the library. The camera header shows the
-live resolution.
+and loads the photo into the editor. The `Lens` chip lists the cameras the
+browser exposes (front/rear and any extra lenses); the zoom presets above the
+shutter and pinch-to-zoom control the field of view. The photo button opens the
+library. The camera header shows the live resolution and zoom.
 
 - Requires **HTTPS** (or localhost) and camera permission.
 - Live capture uses the browser's video track. Resolution is shown in the
   header; it is often 1080p, and 4K where the browser and camera provide it.
   Use `Photos` when you need the phone's full-resolution still image.
+- Hardware zoom is used when the browser exposes it; otherwise zoom is a
+  digital center crop. A 2× digital capture has half the linear resolution.
+- iOS Safari may expose only the front and rear cameras. Ultra-wide and
+  telephoto lenses are not selectable through the web API on those versions.
 - The preview fills the screen; the captured photo contains the full video
   frame, so it can include a little more at the edges than the preview.
 - If `getUserMedia` is unavailable, permission is denied, or the camera is busy,

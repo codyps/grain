@@ -229,14 +229,17 @@
         </svg>
       </button>
       <span id="cameraStatus" class="camera-status">Camera</span>
-      <button id="cameraFlip" class="camera-btn" type="button" aria-label="Switch camera">
+      <span class="camera-side" aria-hidden="true"></span>
+    </div>
+    <div id="cameraZoomBar" class="camera-zoom" hidden>
+      <button id="cameraLens" class="camera-lens-chip" type="button" aria-label="Choose lens">
         <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M20 11a8 8 0 0 0-14-4L4 9"/>
-          <path d="M4 4v5h5"/>
-          <path d="M4 13a8 8 0 0 0 14 4l2-2"/>
-          <path d="M20 20v-5h-5"/>
+          <circle cx="12" cy="12" r="7"/>
+          <circle cx="12" cy="12" r="3"/>
         </svg>
+        <span id="cameraLensLabel">Lens</span>
       </button>
+      <div id="cameraZoomPresets" class="camera-zoom-presets"></div>
     </div>
     <div class="camera-bottom">
       <button id="cameraPhotos" class="camera-btn" type="button" aria-label="Choose from photos">
@@ -249,9 +252,23 @@
       <button id="cameraShutter" class="shutter" type="button" aria-label="Take photo" disabled></button>
       <span class="camera-side" aria-hidden="true"></span>
     </div>
+    <div id="cameraFlash" class="camera-flash" hidden></div>
     <div id="cameraLoading" class="camera-loading" hidden>
       <span class="spinner" aria-hidden="true"></span>
-      <span>Starting camera…</span>
+      <span id="cameraLoadingText">Starting camera…</span>
+    </div>
+    <div id="cameraLensSheet" class="camera-lens-sheet" hidden>
+      <div class="camera-lens-card">
+        <div class="camera-lens-head">
+          <span>Lens</span>
+          <button id="cameraLensClose" class="camera-btn" type="button" aria-label="Close lens list">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12M18 6 6 18"/>
+            </svg>
+          </button>
+        </div>
+        <div id="cameraLensList" class="camera-lens-list"></div>
+      </div>
     </div>
     <div id="cameraError" class="camera-error" hidden>
       <div class="camera-error-card">
