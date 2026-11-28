@@ -927,7 +927,7 @@ select {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
 }
