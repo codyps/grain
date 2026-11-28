@@ -1,32 +1,43 @@
 /* X-T4 film grain — local, installable PWA.
  *
- * Model measured from controlled camera conversions:
- *   Small: uniform white noise, std 5.06 (weak) / 9.83 (strong)
- *   Large: uniform noise + separable 5-tap low-pass
- *          weak 2.74, kernel [0.169, 0.452, 1, 0.452, 0.169]
- *          strong 5.05, kernel [0.186, 0.548, 1, 0.548, 0.186]
- * The field is added equally to R/G/B and clipped to 0..255.
+ * Corrected model from uncompressed X-T4 RAF conversions (ISO 400, Provia,
+ * DR100; firmware 2.12):
+ *   Small: triangular noise + separable 5-tap band-pass
+ *          kernel [-0.06, 0.107, 1, 0.107, -0.06]
+ *          weak std 8.25, strong std 17.05
+ *   Large: Gaussian noise + separable 3-tap low-pass
+ *          kernel [0, 0.79, 1, 0.79, 0]
+ *          weak std 4.02, strong std 8.45
+ * The amplitude follows the measured output-luma curve (black suppression and
+ * highlight rolloff). Acros/B&W is 0.86x with a tighter Large kernel. The same
+ * monochrome field is added to R/G/B and clipped to 0..255.
  */
 (() => {
   'use strict';
 
   const MODEL = {
     small: {
-      weak: { std: 5.06, k1: 0, k2: 0 },
-      strong: { std: 9.83, k1: 0, k2: 0 },
+      weak: { std: 8.25, k1: 0.107, k2: -0.06 },
+      strong: { std: 17.05, k1: 0.107, k2: -0.06 },
     },
     large: {
-      weak: { std: 2.74, k1: 0.452, k2: 0.169 },
-      strong: { std: 5.05, k1: 0.548, k2: 0.186 },
+      weak: { std: 4.02, k1: 0.79, k2: 0 },
+      strong: { std: 8.45, k1: 0.79, k2: 0 },
     },
+  };
+
+  const ACROS = {
+    scale: 0.86,
+    large: { k1: 0.42, k2: 0.05 },
   };
 
   const DEFAULTS = {
     size: 'large',
     strength: 'strong',
+    film: 'color',
     amount: 100,
     seed: 517,
-    gate: true,
+    tone: true,
     maxEdge: 4096,
     format: 'jpeg',
   };
@@ -51,7 +62,7 @@
     amountOut: $('amountOut'),
     seedOut: $('seedOut'),
     shuffleBtn: $('shuffleBtn'),
-    gate: $('gate'),
+    tone: $('tone'),
     resolution: $('resolution'),
     resetBtn: $('resetBtn'),
     installBtn: $('installBtn'),
@@ -74,9 +85,11 @@
       const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
       if (raw.size === 'small' || raw.size === 'large') s.size = raw.size;
       if (raw.strength === 'weak' || raw.strength === 'strong') s.strength = raw.strength;
+      if (raw.film === 'color' || raw.film === 'acros') s.film = raw.film;
       if (Number.isFinite(raw.amount)) s.amount = Math.max(0, Math.min(200, Math.round(raw.amount)));
       if (Number.isFinite(raw.seed)) s.seed = Math.max(0, Math.min(4095, Math.round(raw.seed)));
-      if (typeof raw.gate === 'boolean') s.gate = raw.gate;
+      if (typeof raw.tone === 'boolean') s.tone = raw.tone;
+      else if (typeof raw.gate === 'boolean') s.tone = raw.gate;
       if ([0, 2048, 3072, 4096].includes(raw.maxEdge)) s.maxEdge = raw.maxEdge;
       if (raw.format === 'jpeg' || raw.format === 'png') s.format = raw.format;
     } catch (_) { /* ignore corrupt storage */ }
@@ -94,26 +107,50 @@
     return a < 0.5 ? 1 : (a < 1.5 ? k1 : k2);
   }
 
-  /** Convert the measured 8-bit target std into the shader's gain. */
-  function computeGain(size, strength, amount) {
+  function modelParams(size, strength, film) {
     const m = MODEL[size][strength];
-    const std = m.std * (amount / 100);
-    if (size === 'small') return std * Math.sqrt(3); // uniform [-1,1] has std 1/sqrt(3)
-    const norm = 1 + 2 * m.k1 + 2 * m.k2;
+    const acros = film === 'acros';
+    const scale = acros ? ACROS.scale : 1;
+    if (acros && size === 'large') {
+      return {
+        std: m.std * scale,
+        k1: ACROS.large.k1,
+        k2: ACROS.large.k2,
+        dist: 1, // Gaussian source
+        radius: 2,
+        variance: 1,
+      };
+    }
+    return {
+      std: m.std * scale,
+      k1: m.k1,
+      k2: m.k2,
+      dist: size === 'small' ? 0 : 1, // triangular / Gaussian
+      radius: m.k2 !== 0 ? 2 : 1,
+      variance: size === 'small' ? 2 / 3 : 1,
+    };
+  }
+
+  /** Convert the measured 8-bit target std into the shader's gain. */
+  function computeGain(size, strength, amount, film) {
+    const p = modelParams(size, strength, film);
+    const std = p.std * (amount / 100);
+    const norm = 1 + 2 * p.k1 + 2 * p.k2;
     let sumW2 = 0;
     for (let dy = -2; dy <= 2; dy++) {
       for (let dx = -2; dx <= 2; dx++) {
-        const w = (kw(dx, m.k1, m.k2) * kw(dy, m.k1, m.k2)) / (norm * norm);
+        const w = (kw(dx, p.k1, p.k2) * kw(dy, p.k1, p.k2)) / (norm * norm);
         sumW2 += w * w;
       }
     }
-    return std / Math.sqrt(sumW2 / 3);
+    return std / Math.sqrt(p.variance * sumW2);
   }
 
   function modelLabel() {
     const size = state.size === 'small' ? 'Small' : 'Large';
     const strength = state.strength === 'weak' ? 'Weak' : 'Strong';
-    return `${size} · ${strength} · ${state.amount}%`;
+    const film = state.film === 'acros' ? 'Acros' : 'Color';
+    return `${size} · ${strength} · ${film} · ${state.amount}%`;
   }
 
   // --------------------------------------------------------------- renderer
@@ -136,10 +173,11 @@
     uniform sampler2D u_image;
     uniform float u_seed;
     uniform float u_gain;
-    uniform float u_large;
+    uniform float u_dist;
+    uniform float u_radius;
     uniform float u_k1;
     uniform float u_k2;
-    uniform float u_gate;
+    uniform float u_tone;
     varying vec2 v_uv;
 
     float hash(vec2 p, float seed) {
@@ -150,30 +188,56 @@
       return fract((p3.x + p3.y) * p3.z);
     }
 
+    // White source for the measured field. Small uses a triangular source
+    // (sum of two uniforms), Large a Gaussian source.
+    float source(vec2 p, float seed) {
+      if (u_dist < 0.5) {
+        float u = hash(p, seed);
+        float v = 2.0 * u - 1.0;
+        return 2.0 * sign(v) * (1.0 - sqrt(abs(v)));
+      }
+      float u1 = max(hash(p, seed), 1e-6);
+      float u2 = hash(p + vec2(37.0, 17.0), seed + 1.0);
+      return sqrt(-2.0 * log(u1)) * cos(6.283185307179586 * u2);
+    }
+
     float kw(float d) {
       d = abs(d);
       return d < 0.5 ? 1.0 : (d < 1.5 ? u_k1 : u_k2);
     }
 
+    // Measured amplitude vs output luma: black suppression, flat midtones,
+    // highlight rolloff. Values from the X-T4 step-wedge calibration.
+    float toneGain(float y) {
+      if (y <= 0.0) return 0.0;
+      if (y < 16.0) return y / 16.0;
+      if (y < 179.0) return mix(1.0, 0.957, (y - 16.0) / 163.0);
+      if (y < 202.0) return mix(0.957, 0.864, (y - 179.0) / 23.0);
+      if (y < 214.0) return mix(0.864, 0.781, (y - 202.0) / 12.0);
+      if (y < 224.0) return mix(0.781, 0.749, (y - 214.0) / 10.0);
+      if (y < 237.0) return mix(0.749, 0.717, (y - 224.0) / 13.0);
+      if (y < 248.0) return mix(0.717, 0.521, (y - 237.0) / 11.0);
+      if (y < 254.0) return mix(0.521, 0.186, (y - 248.0) / 6.0);
+      if (y < 255.0) return mix(0.186, 0.03, (y - 254.0) / 1.0);
+      return 0.03;
+    }
+
     void main() {
       vec3 c = texture2D(u_image, v_uv).rgb;
-      float n;
-      if (u_large < 0.5) {
-        n = hash(gl_FragCoord.xy, u_seed) * 2.0 - 1.0;
-      } else {
-        float s = 0.0;
-        for (int dy = -2; dy <= 2; dy++) {
-          for (int dx = -2; dx <= 2; dx++) {
+      float norm = 1.0 + 2.0 * u_k1 + 2.0 * u_k2;
+      float n = 0.0;
+      for (int dy = -2; dy <= 2; dy++) {
+        for (int dx = -2; dx <= 2; dx++) {
+          if (abs(float(dx)) <= u_radius && abs(float(dy)) <= u_radius) {
             float w = kw(float(dx)) * kw(float(dy));
-            s += (hash(gl_FragCoord.xy + vec2(float(dx), float(dy)), u_seed) * 2.0 - 1.0) * w;
+            n += source(gl_FragCoord.xy + vec2(float(dx), float(dy)), u_seed) * w;
           }
         }
-        float norm = 1.0 + 2.0 * u_k1 + 2.0 * u_k2;
-        n = s / (norm * norm);
       }
-      float lum = dot(c, vec3(0.299, 0.587, 0.114));
-      float gate = mix(1.0, smoothstep(0.0, 0.08, lum), u_gate);
-      gl_FragColor = vec4(clamp(c + vec3(n * u_gain * gate / 255.0), 0.0, 1.0), 1.0);
+      n /= (norm * norm);
+      float luma = dot(c, vec3(0.299, 0.587, 0.114)) * 255.0;
+      float tone = mix(1.0, toneGain(luma), u_tone);
+      gl_FragColor = vec4(clamp(c + vec3(n * u_gain * tone / 255.0), 0.0, 1.0), 1.0);
     }
   `;
 
@@ -234,10 +298,11 @@
         image: gl.getUniformLocation(p, 'u_image'),
         seed: gl.getUniformLocation(p, 'u_seed'),
         gain: gl.getUniformLocation(p, 'u_gain'),
-        large: gl.getUniformLocation(p, 'u_large'),
+        dist: gl.getUniformLocation(p, 'u_dist'),
+        radius: gl.getUniformLocation(p, 'u_radius'),
         k1: gl.getUniformLocation(p, 'u_k1'),
         k2: gl.getUniformLocation(p, 'u_k2'),
-        gate: gl.getUniformLocation(p, 'u_gate'),
+        tone: gl.getUniformLocation(p, 'u_tone'),
       };
 
       const buf = gl.createBuffer();
@@ -286,10 +351,11 @@
       gl.uniform1i(this.u.image, 0);
       gl.uniform1f(this.u.seed, p.seed);
       gl.uniform1f(this.u.gain, p.gain);
-      gl.uniform1f(this.u.large, p.large ? 1 : 0);
+      gl.uniform1f(this.u.dist, p.dist);
+      gl.uniform1f(this.u.radius, p.radius);
       gl.uniform1f(this.u.k1, p.k1);
       gl.uniform1f(this.u.k2, p.k2);
-      gl.uniform1f(this.u.gate, p.gate ? 1 : 0);
+      gl.uniform1f(this.u.tone, p.tone ? 1 : 0);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
   }
@@ -401,14 +467,15 @@
       setStatus(renderer ? renderer.error : 'WebGL is not available.');
       return;
     }
-    const m = MODEL[state.size][state.strength];
+    const p = modelParams(state.size, state.strength, state.film);
     renderer.render({
       seed: state.seed,
-      gain: computeGain(state.size, state.strength, state.amount),
-      large: state.size === 'large',
-      k1: m.k1,
-      k2: m.k2,
-      gate: state.gate,
+      gain: computeGain(state.size, state.strength, state.amount, state.film),
+      dist: p.dist,
+      radius: p.radius,
+      k1: p.k1,
+      k2: p.k2,
+      tone: state.tone,
     });
   }
 
@@ -460,6 +527,11 @@
       b.classList.toggle('active', on);
       b.setAttribute('aria-pressed', String(on));
     });
+    document.querySelectorAll('[data-film]').forEach((b) => {
+      const on = b.dataset.film === state.film;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
     document.querySelectorAll('[data-format]').forEach((b) => {
       const on = b.dataset.format === state.format;
       b.classList.toggle('active', on);
@@ -468,7 +540,7 @@
     els.amount.value = String(state.amount);
     els.amountOut.textContent = `${state.amount}%`;
     els.seedOut.textContent = String(state.seed);
-    els.gate.checked = state.gate;
+    els.tone.checked = state.tone;
     els.resolution.value = String(state.maxEdge);
     updateStatus();
   }
@@ -485,6 +557,14 @@
     document.querySelectorAll('[data-strength]').forEach((b) => {
       b.addEventListener('click', () => {
         state.strength = b.dataset.strength;
+        saveSettings();
+        syncUI();
+        scheduleRender();
+      });
+    });
+    document.querySelectorAll('[data-film]').forEach((b) => {
+      b.addEventListener('click', () => {
+        state.film = b.dataset.film;
         saveSettings();
         syncUI();
         scheduleRender();
@@ -512,8 +592,8 @@
       render();
     });
 
-    els.gate.addEventListener('change', () => {
-      state.gate = els.gate.checked;
+    els.tone.addEventListener('change', () => {
+      state.tone = els.tone.checked;
       saveSettings();
       scheduleRender();
     });

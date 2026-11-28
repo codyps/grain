@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0d0d0f">
-  <meta name="description" content="X-T4 film grain for your photos. Local, installable, offline.">
+  <meta name="description" content="Corrected X-T4 film grain for your photos. Local, installable, offline.">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -57,7 +57,8 @@
         </div>
         <div class="notes">
           <span class="notes-title">Measured X-T4 model</span>
-          <span>Small: white uniform · Large: 5-tap low-pass · Strong ≈ 2× Weak</span>
+          <span>Small: 5-tap band-pass · Large: 3-tap low-pass · tone-aware</span>
+          <span>Calibrated ISO 400 · Provia · DR100</span>
         </div>
       </section>
 
@@ -86,6 +87,15 @@
         </div>
 
         <div class="control">
+          <div class="control-head"><span>Film</span><small>grain profile</small></div>
+          <div class="seg" role="group" aria-label="Film grain profile">
+            <button type="button" data-film="color" class="active">Color</button>
+            <button type="button" data-film="acros">Acros</button>
+          </div>
+          <div class="hint">Acros/B&amp;W: 0.86× amplitude, tighter Large kernel</div>
+        </div>
+
+        <div class="control">
           <div class="control-head"><span>Seed</span><output id="seedOut">517</output></div>
           <div class="row">
             <button id="shuffleBtn" class="ghost small" type="button">Shuffle</button>
@@ -94,8 +104,8 @@
         </div>
 
         <label class="switch">
-          <span>Shadow gate<small>suppress grain in blacks</small></span>
-          <input id="gate" type="checkbox" checked>
+          <span>Camera tone response<small>suppress blacks, roll off highlights</small></span>
+          <input id="tone" type="checkbox" checked>
           <i aria-hidden="true"></i>
         </label>
 

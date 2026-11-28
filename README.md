@@ -8,31 +8,49 @@ effect to photos. It runs entirely in the browser: no uploads, no account.
 - **Camera or library**: `Camera` opens the rear camera; `Photos` opens the
   photo picker.
 - **Local processing**: WebGL shader, no server.
-- **Controls**: Small/Large grain, Weak/Strong strength, Amount 0–200%,
-  Seed + Shuffle, Shadow gate, working resolution, JPEG/PNG.
+- **Controls**: Small/Large grain, Weak/Strong strength, Color/Acros film
+  profile, Amount 0–200%, Seed + Shuffle, Camera tone response, working
+  resolution, JPEG/PNG.
 - **Compare** toggle against the original.
 - **Installable PWA**: Android install prompt; iOS Add to Home Screen.
 - **Offline**: the app shell is cached by a service worker.
-- **Persistent settings**: size, strength, amount, seed, gate, resolution and
-  format are stored in `localStorage`.
+- **Persistent settings**: size, strength, film, amount, seed, tone, resolution
+  and format are stored in `localStorage`.
 - **App shell**: the header and action dock stay fixed; only the content area
   scrolls.
 
 ## Grain model
 
-Measured from controlled RAF conversions on an X-T4 (firmware 2.12):
+Corrected from uncompressed X-T4 RAF conversions (firmware 2.12; ISO 400,
+Provia, DR100):
 
-| Size | Strength | Std (8-bit) | Kernel |
-| --- | --- | ---: | --- |
-| Small | Weak | 5.06 | delta (white uniform) |
-| Small | Strong | 9.83 | delta (white uniform) |
-| Large | Weak | 2.74 | 0.169, 0.452, 1, 0.452, 0.169 |
-| Large | Strong | 5.05 | 0.186, 0.548, 1, 0.548, 0.186 |
+| Size | Strength | Std (8-bit) | Source | Kernel |
+| --- | --- | ---: | --- | --- |
+| Small | Weak | 8.25 | triangular | -0.06, 0.107, 1, 0.107, -0.06 |
+| Small | Strong | 17.05 | triangular | -0.06, 0.107, 1, 0.107, -0.06 |
+| Large | Weak | 4.02 | Gaussian | 0, 0.79, 1, 0.79, 0 |
+| Large | Strong | 8.45 | Gaussian | 0, 0.79, 1, 0.79, 0 |
+
+Small is a separable 5-tap band-pass; Large is a separable 3-tap low-pass.
+Strong is about 2.07× Weak, and Small is about 2.04× Large in RMS. The same
+monochrome field is added to R/G/B and clipped to 0–255.
+
+The amplitude follows the measured output-luma curve: zero at black, flat
+through the midtones, and rolling off toward highlight clipping. The `Camera
+tone response` switch applies that curve; turn it off for a uniform-amplitude
+creative variant.
+
+`Acros` uses the B&W/Acros grain path: 0.86× amplitude and a tighter Large
+kernel (0.05, 0.42, 1, 0.42, 0.05). Color simulations measured flat; other B&W
+variants are assumed to share the Acros path.
 
 `Amount` scales the measured amplitude; 100% is the measured baseline (so the
-slider thumb sits at the midpoint of 0–200%). The same monochrome field is
-added to R/G/B, clipped to 0–255. The shadow gate fades the grain near black,
-matching the camera's black-point behavior.
+slider thumb sits at the midpoint of 0–200%). The rendered amplitude at luma
+134 is about 0.969× the target because the measured tone curve is applied.
+
+An earlier synthetic RAF (compressed X-T4 CFA plus an X-T30 header, black point
+4096) mis-scaled the tone and produced the old white-Small / 5.0-amplitude
+model. It is superseded by the uncompressed-X-T4 calibration above.
 
 ## Run locally
 
@@ -63,20 +81,34 @@ Bump `CACHE` in `sw.js` when you deploy changes.
 
 ## Validation
 
-A headless Chromium + SwiftShader test loaded a flat-field image, measured the
-rendered grain against the amount-0 reference, and exercised the controls,
-compare overlay, save/download, service worker and manifest:
+A headless Chromium + SwiftShader test loaded a neutral luma-134 flat field,
+measured the rendered grain against the amount-0 reference, and exercised the
+controls, compare overlay, save/download, service worker and manifest. The
+target is the measured camera std; the rendered value includes the tone curve
+at luma 134 (0.969×).
 
-| Setting | Expected std | Rendered std |
+| Setting | Target std | Rendered std |
 | --- | ---: | ---: |
-| Large / Strong | 5.05 | 5.055 |
-| Small / Strong | 9.83 | 9.842 |
-| Small / Weak | 5.06 | 5.073 |
-| Large / Weak | 2.74 | 2.754 |
+| Large / Strong | 8.45 | 8.218 |
+| Small / Strong | 17.05 | 16.487 |
+| Small / Weak | 8.25 | 7.982 |
+| Large / Weak | 4.02 | 3.918 |
+| Large / Strong / Acros | 7.27 | 7.069 |
+| Large / Strong, tone off | 8.45 | 8.481 |
 
-No console errors or page errors; service worker active; JPEG download
-produced. The screenshots and test report are kept in the research workspace
-(`work/grain-web-test/`), not shipped in the deploy folder.
+Tone-curve bands, Large/Strong:
+
+| Luma | Expected std | Rendered std |
+| ---: | ---: | ---: |
+| 0 (black) | 0 | 0 |
+| 134 (calibration) | 8.19 | 8.21 |
+| 220 (light) | 6.44 | 6.47 |
+| 255 (white) | 0.25 pre-clip | 0.16 |
+
+All amplitude and tone checks are within 6% of the model. No console errors or
+page errors; service worker active; JPEG download produced. The screenshots and
+test report are kept in the research workspace (`work/grain-web-test/`), not
+shipped in the deploy folder.
 
 ## Files
 
@@ -107,7 +139,15 @@ Settings stay in `localStorage`; the app shell is cached for offline use.
 - Default working resolution is 4096 px long edge. `Original` is bounded by the
   device's canvas and WebGL texture limits; use 2048 px on older phones.
 - WebGL is required.
-- Model parameters were measured at ISO 160, Provia, DR200; `Amount` is a
-  creative multiplier, not an ISO/film-simulation simulation.
-- The grain field is regenerated per render; it is statistically equivalent to
-  the camera, not frame-identical.
+- The corrected calibration is **ISO 400, Provia, DR100**. ISO 400–1250 measured
+  flat; outside that range untested. Color film simulations measured flat;
+  Acros/B&W is 0.86× with a tighter Large kernel. Other B&W variants are assumed
+  to share that path.
+- The tone curve was tabulated from the Strong/Large step wedge and is assumed
+  to scale for the other size/strength combinations.
+- The model is statistically equivalent to the camera, not frame-identical:
+  the camera regenerates the field per conversion, and the exact PRNG, seed and
+  coefficient bytes are not recoverable from the output. The Large kernel is a
+  3-tap approximation; the camera has a small negative autocorrelation tail at
+  lags 4–5, likely JPEG.
+- `Amount` is a creative multiplier, not an ISO or film-simulation simulation.

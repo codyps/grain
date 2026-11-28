@@ -2,7 +2,7 @@
   "id": "./",
   "name": "GRAIN — X-T4 film grain",
   "short_name": "Grain",
-  "description": "Add measured X-T4 film grain to photos. Local, offline, installable.",
+  "description": "Add the corrected X-T4 film grain model to photos. Local, offline, installable.",
   "lang": "en",
   "start_url": "./",
   "scope": "./",
