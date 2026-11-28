@@ -1,9 +1,10 @@
-const CACHE = 'xt4-grain-v12';
+const CACHE = 'xt4-grain-v13';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './tier2.js',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',

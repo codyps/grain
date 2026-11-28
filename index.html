@@ -165,7 +165,7 @@
           <div class="physics-only" hidden>
             <div class="sheet-head"><span>Layers</span><output id="physicsLayersOut">120</output></div>
             <input id="physicsLayers" type="range" min="4" max="160" step="4" value="120">
-            <p class="sheet-hint">Effective layers; the calibrated generic profile uses 120. Fewer layers give stronger grain.</p>
+            <p class="sheet-hint" id="layersHint">Effective layers; the calibrated generic profile uses 120. Fewer layers give stronger grain.</p>
           </div>
         </section>
 
@@ -217,11 +217,19 @@
               <i aria-hidden="true"></i>
             </label>
             <div class="physics-only" hidden>
+              <div class="more-row">
+                <span>Tier</span>
+                <div class="seg small" role="group" aria-label="Physics tier">
+                  <button type="button" data-physics-tier="1">Preview</button>
+                  <button type="button" data-physics-tier="2" class="active">Discrete</button>
+                </div>
+              </div>
+              <p id="tierHint" class="sheet-hint">Tier 2 paints discrete polygonal grains layer by layer (slower); Preview uses the fast statistical field.</p>
               <div class="more-row"><span>Color correlation</span><output id="physicsRhoOut">0.70</output></div>
               <input id="physicsRho" type="range" min="0" max="0.95" step="0.05" value="0.7">
               <div class="more-row"><span>Chroma scale</span><output id="physicsChromaOut">0.4</output></div>
               <input id="physicsChroma" type="range" min="0" max="1" step="0.05" value="0.4">
-              <p class="sheet-hint">Tier-1 statistics of the layered coverage model: density-dependent variance, clump-scale correlation, correlated color layers. The full discrete-grain Tier-2 prototype is in the research repo.</p>
+              <p class="sheet-hint">Tier-2 uses WebGL2 point-sprite coverage at up to 2048 px; the full CPU prototype is in the research repo.</p>
             </div>
             <div class="more-row">
               <span>Resolution</span>
@@ -327,6 +335,7 @@
   <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden>
   <input id="galleryInput" type="file" accept="image/*" hidden>
 
+  <script src="tier2.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

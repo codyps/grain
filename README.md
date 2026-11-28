@@ -6,8 +6,8 @@ browser: no uploads, no account.
 
 ## Features
 
-- **Two models**: measured X-T4 grain or physics-based layered coverage,
-  selected under `More → Model`.
+- **Two models**: measured X-T4 grain or physics-based layered coverage
+  (Tier 2 discrete / Tier 1 preview), selected under `More → Model`.
 - **Full-screen viewer**: the image fills the screen. Pinch or scroll to zoom,
   drag to pan, double-tap or `Fit` to reset.
 - **Quick compare**: a floating eye button toggles the original without leaving
@@ -33,8 +33,9 @@ The photo is the main surface. Pinch or use the mouse wheel to zoom from 1× to
 8×, drag to pan, double-tap to reset, or tap the fit button. The eye button
 switches between the grain and the original. The bottom tray shows the current
 model's parameters; tapping a tool opens a compact sheet above it. `More`
-contains the model selector, seed, tone response (X-T4), physics color
-correlation and chroma, resolution, save format, rotate, install, and reset.
+contains the model selector, physics tier, seed, tone response (X-T4), physics
+color correlation and chroma, resolution, save format, rotate, install, and
+reset.
 
 ## Camera
 
@@ -96,35 +97,54 @@ model. It is superseded by the uncompressed-X-T4 calibration above.
 
 ## Physics model
 
-Select `More → Model → Physics`. This is the browser Tier-1 statistical
-implementation of the layered Poisson coverage/occlusion model in
-`reports/Film grain physics simulation.md` and `work/grain-physics/`.
+Select `More → Model → Physics`. The default is **Tier 2 (Discrete)**, a WebGL2
+renderer that approximates the layered Poisson coverage/occlusion model in
+`reports/Film grain physics simulation.md` and `work/grain-physics/`. Switch the
+`Tier` control to **Preview** for the faster Tier-1 field.
 
-The physics path works in scene-linear light:
+### Tier 2 (Discrete)
 
-- per-channel target coverage `p = 1 - Y` (or luminance `p = 1 - Y` in Mono);
-- amplitude `sqrt(p(1-p)/layers)` from the coverage variance, giving a midtone
-  peak and zero grain at black and white;
+Each layer samples a log-normal polygonal grain footprint, paints that polygon
+at Poisson seeds over the coverage field, thresholds the layer, and accumulates
+the signed deviation. The pipeline is:
+
+- scene-linear `p = 1 - Y` (or luminance in Mono);
+- seed probability `s = 1 - (1-p)^(1/A)` for the rasterized polygon area `A`;
+- one polygon size/shape per layer, many seeds per layer;
+- `p - coverage` accumulated over the layer stack;
+- a 3×3 Gaussian PSF;
+- a mean-preserving display LUT that corrects the sRGB skew of the binomial
+  coverage distribution.
+
+Color shares a fraction `rho` of seeds across channels; Mono applies the field
+to luminance. Defaults: **6 px, 20 physical layers, Color, rho 0.7, chroma 0.4**.
+The `Layers` slider is 4–40 for Tier 2. Tier-1 preview uses 120 effective layers
+by default.
+
+### Tier 1 (Preview)
+
+The fast path is the statistical version of the same model:
+
+- per-channel coverage `p = 1 - Y`;
+- amplitude `sqrt(p(1-p)/layers)`, giving a midtone peak and zero at black/white;
 - a clump-scale correlated field fitted to the Tier-2 autocorrelation
   (`0.86 / 0.58 / 0.34` at lags 1–3 for 6 px);
-- Color uses per-channel fields correlated by `rho`; Mono applies the field to
-  luminance only; `Chroma scale` controls the color deviation around luminance.
+- Color uses per-channel fields correlated by `rho`; Mono applies luminance
+  grain; `Chroma scale` controls color deviation.
 
-Defaults: **6 px grain, 120 effective layers, Color, rho 0.7, chroma 0.4**.
-The calibrated generic color-negative profile uses 120 effective layers; fewer
-layers give stronger grain.
+### Scope and limits
 
-Important scope: the browser path is **Tier 1** — density-dependent correlated
-noise calibrated to the layered model's statistics. It does not place discrete
-polygonal grains, simulate layer-by-layer occlusion/light depletion, or model
-coupler/DIR chemistry. The full discrete-grain Tier-2 prototype is the CPU code
-in `work/grain-physics/` and is not shipped in the PWA. The generic profile is
-not a reconstruction of a specific film stock.
+Tier 2 is a browser approximation of the coverage/occlusion limit, not a full
+microphysical emulsion. It places polygonal grains and thresholds layers, but
+does not model per-layer light depletion, coupler/DIR chemistry, adjacency
+effects, or a stock-specific emulsion. The generic profile is not a
+reconstruction of a specific film stock.
 
-The physics noise field is generated at up to 3072 px and sampled at the working
-resolution, so very large Originals use an upsampled field; use 2048 or 3072 px
-for speed. The physics model operates in linear light, so the sRGB display mean
-can shift slightly (about 0.3 code at the default).
+Tier 2 requires WebGL2 with half-float render targets (iOS Safari 15+). It
+renders the grain field at up to 2048 px and samples it at the working
+resolution; very large Originals use an upsampled field, so use 2048 or 3072 px
+for speed. Tier 2 is slower than Preview and is debounced behind a rendering
+overlay. The full CPU prototype remains in `work/grain-physics/`.
 
 ## Run locally
 
@@ -184,28 +204,39 @@ errors or page errors; service worker active; JPEG download produced. The
 screenshots and test report are kept in the research workspace
 (`work/grain-web-test/`), not shipped in the deploy folder.
 
-Physics model at the calibrated default (6 px, 120 layers, Color, rho 0.7,
-chroma 0.4, 100%) on the same luma-134 flat and tone bands:
+Tier 2 at the default (6 px, 20 layers, Color, rho 0.7, chroma 0.4, 100%) on
+the luma-134 flat and tone bands:
+
+| Check | Rendered |
+| --- | ---: |
+| Flat std at luma 134 | 17.38 |
+| Black band std | 0 |
+| Midtone band std | 17.03 |
+| Light band std | 10.45 |
+| White band std | 0 |
+| Mean shift at flat / mid / light | −2.12 / −1.61 / +1.07 code |
+
+Tier 1 preview at 120 effective layers:
 
 | Check | Rendered |
 | --- | ---: |
 | Flat std at luma 134 | 7.37 |
-| Black band std | 0 |
-| Midtone band std | 7.35 |
-| Light band std | 4.06 |
-| White band std | 0 |
+| Black / mid / light / white | 0 / 7.35 / 4.06 / 0 |
 | Mean shift at luma 134 | −0.31 code |
 
-The midtone peak and black/white suppression match the layered coverage
-model's `sqrt(p(1-p)/layers)` behavior. The physics test also exercises the
-model selector, tray labels, Color/Mono switch, and `More` controls.
+Tier 2 is much stronger at its 20-physical-layer default than the 120-layer
+Tier-1 preview; lower `Amount` or `Layers` if you want the calibrated subtle
+look. The midtone peak and black/white suppression match the layered coverage
+model in both tiers. The physics tests also exercise the model selector, tier
+switch, tray labels, Color/Mono switch, and `More` controls.
 
 ## Files
 
 ```
 index.html            app shell and controls
 styles.css            responsive dark UI
-app.js                image pipeline, WebGL grain, PWA wiring
+app.js                image pipeline, X-T4 + Tier-1 physics, PWA wiring
+tier2.js              WebGL2 Tier-2 layered-coverage renderer
 sw.js                 offline app-shell cache
 manifest.json         install metadata
 _headers              CSP/cache headers (Netlify, Cloudflare Pages)
@@ -236,7 +267,8 @@ Settings stay in `localStorage`; the app shell is cached for offline use.
 - Default working resolution is **Original** (the full decoded image, capped by
   the device's canvas/WebGL texture limit). Use 2048 px on older phones if the
   full size is slow.
-- WebGL is required.
+- WebGL is required. Tier 2 additionally needs WebGL2 with half-float render
+  targets (iOS Safari 15+).
 - The corrected calibration is **ISO 400, Provia, DR100**. ISO 400–1250 measured
   flat; outside that range untested. Color film simulations measured flat;
   Acros/B&W is 0.86× with a tighter Large kernel. Other B&W variants are assumed
@@ -248,11 +280,11 @@ Settings stay in `localStorage`; the app shell is cached for offline use.
   exact PRNG, seed and coefficient bytes are not recoverable from the output.
   The Large kernel is a 3-tap approximation; the camera has a small negative
   autocorrelation tail at lags 4–5, likely JPEG.
-- The physics model is a **Tier-1** browser approximation: density-dependent
-  correlated noise fitted to the layered model's statistics, not discrete
-  polygonal grains or layer-by-layer occlusion/light depletion. Coupler/DIR
-  chemistry and adjacency effects are not modeled. The generic profile is not a
-  specific stock. The physics noise field is capped at 3072 px and upsampled for
-  very large Originals; the linear-light render can shift the sRGB mean by a
-  fraction of a code value.
+- The physics model has two tiers. **Tier 2** places discrete polygonal
+  grains, thresholds layers, accumulates coverage, applies a PSF, and uses a
+  mean-preserving display LUT; it is capped at 2048 px and is slower. **Tier 1**
+  is the fast statistical approximation. Neither models per-layer light
+  depletion, coupler/DIR chemistry, adjacency effects, or a specific film
+  stock. The 20-layer Tier-2 default is stronger than the calibrated 120-layer
+  Tier-1 look; use `Amount` or `Layers` to adjust.
 - `Amount` is a creative multiplier, not an ISO or film-simulation simulation.

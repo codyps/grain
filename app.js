@@ -44,6 +44,8 @@
     format: 'jpeg',
     physicsGrain: 6,
     physicsLayers: 120,
+    physicsLayers2: 20,
+    physicsTier: 2,
     physicsColor: 'color',
     physicsRho: 0.7,
     physicsChroma: 0.4,
@@ -109,6 +111,8 @@
     physicsGrainOut: $('physicsGrainOut'),
     physicsLayers: $('physicsLayers'),
     physicsLayersOut: $('physicsLayersOut'),
+    layersHint: $('layersHint'),
+    tierHint: $('tierHint'),
     physicsRho: $('physicsRho'),
     physicsRhoOut: $('physicsRhoOut'),
     physicsChroma: $('physicsChroma'),
@@ -131,6 +135,8 @@
   let renderTimer = 0;
   let toastTimer = 0;
   let busyCount = 0;
+  let tier2Busy = false;
+  let tier2Again = false;
   let cameraStream = null;
   let cameraFacing = 'environment';
   let cameraActive = false;
@@ -160,6 +166,8 @@
       if (raw.physicsColor === 'color' || raw.physicsColor === 'mono') s.physicsColor = raw.physicsColor;
       if (Number.isFinite(raw.physicsGrain)) s.physicsGrain = Math.max(2, Math.min(16, Math.round(raw.physicsGrain)));
       if (Number.isFinite(raw.physicsLayers)) s.physicsLayers = Math.max(4, Math.min(160, Math.round(raw.physicsLayers)));
+      if (Number.isFinite(raw.physicsLayers2)) s.physicsLayers2 = Math.max(4, Math.min(40, Math.round(raw.physicsLayers2)));
+      if (raw.physicsTier === 1 || raw.physicsTier === 2) s.physicsTier = raw.physicsTier;
       if (Number.isFinite(raw.physicsRho)) s.physicsRho = Math.max(0, Math.min(0.95, raw.physicsRho));
       if (Number.isFinite(raw.physicsChroma)) s.physicsChroma = Math.max(0, Math.min(1, raw.physicsChroma));
       if (Number.isFinite(raw.amount)) s.amount = Math.max(0, Math.min(200, Math.round(raw.amount)));
@@ -226,7 +234,8 @@
 
   function modelLabel() {
     if (state.model === 'physics') {
-      return `Grain ${state.physicsGrain}px · ${state.physicsLayers} layers · ` +
+      const layers = state.physicsTier === 2 ? state.physicsLayers2 : state.physicsLayers;
+      return `Tier ${state.physicsTier} · Grain ${state.physicsGrain}px · ${layers} layers · ` +
         `${state.physicsColor === 'mono' ? 'Mono' : 'Color'} · ${state.amount}%`;
     }
     const size = state.size === 'small' ? 'Small' : 'Large';
@@ -558,6 +567,10 @@
       this.physSig = '';
       this.physA = null;
       this.physB = null;
+      this.tier2 = window.Tier2Renderer
+        ? new window.Tier2Renderer(gl, this.tex, this.canvas, this.maxTextureSize())
+        : null;
+      this.tier2Ok = !!(this.tier2 && this.tier2.ok);
       this.ok = true;
     }
 
@@ -580,6 +593,7 @@
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
       this.hasImage = true;
       this.physSig = '';
+      if (this.tier2) this.tier2.invalidate();
     }
 
     createPhysicsTarget(w, h) {
@@ -664,6 +678,9 @@
 
     render(p) {
       if (!this.ok || !this.hasImage) return false;
+      if (p.model === 'physics' && p.tier === 2) {
+        return this.tier2Ok ? this.tier2.render(p) : false;
+      }
       if (p.model === 'physics' && this.physicsOk) return this.renderPhysics(p);
       return this.renderXt4(p);
     }
@@ -849,9 +866,64 @@
     }
 
     if (state.model === 'physics') {
+      if (state.physicsTier === 2) {
+        if (!renderer.tier2Ok) {
+          state.physicsTier = 1;
+          saveSettings();
+          syncUI();
+          showToast('Tier 2 is unavailable; using Preview.');
+        } else if (tier2Busy) {
+          tier2Again = true;
+          return;
+        } else {
+          tier2Busy = true;
+          els.saveBtn.disabled = true;
+          setBusy(true);
+          showToast('Rendering Tier-2…', 1200);
+          requestAnimationFrame(() => setTimeout(() => {
+            let ok = false;
+            try {
+              ok = renderer.render({
+                model: 'physics',
+                tier: 2,
+                seed: state.seed,
+                grainPx: state.physicsGrain,
+                layers: state.physicsLayers2,
+                mono: state.physicsColor === 'mono',
+                rho: state.physicsRho,
+                chroma: state.physicsChroma,
+                amount: state.amount,
+              });
+            } catch (err) {
+              console.error(err);
+            } finally {
+              tier2Busy = false;
+              setBusy(false);
+              if (work) els.saveBtn.disabled = false;
+            }
+            if (ok) {
+              clearTimeout(toastTimer);
+              els.toast.hidden = true;
+            }
+            if (!ok) {
+              state.physicsTier = 1;
+              saveSettings();
+              syncUI();
+              showToast('Tier-2 render failed; using Preview.');
+              render();
+            } else if (tier2Again) {
+              tier2Again = false;
+              render();
+            }
+          }, 20));
+          return;
+        }
+      }
+
       if (renderer.physicsOk) {
         const ok = renderer.render({
           model: 'physics',
+          tier: 1,
           seed: state.seed,
           grainPx: state.physicsGrain,
           layers: state.physicsLayers,
@@ -1492,8 +1564,15 @@
       b.classList.toggle('active', on);
       b.setAttribute('aria-pressed', String(on));
     });
+    document.querySelectorAll('[data-physics-tier]').forEach((b) => {
+      const on = Number(b.dataset.physicsTier) === state.physicsTier;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
 
     const physics = state.model === 'physics';
+    const tier2 = physics && state.physicsTier === 2;
+    const activeLayers = tier2 ? state.physicsLayers2 : state.physicsLayers;
     document.querySelectorAll('.xt4-only').forEach((el) => { el.hidden = physics; });
     document.querySelectorAll('.physics-only').forEach((el) => { el.hidden = !physics; });
 
@@ -1507,18 +1586,29 @@
       ? `${state.physicsGrain} px`
       : (state.size === 'small' ? 'Small' : 'Large');
     els.strengthValue.textContent = physics
-      ? String(state.physicsLayers)
+      ? String(activeLayers)
       : (state.strength === 'weak' ? 'Weak' : 'Strong');
     els.filmValue.textContent = physics
       ? (state.physicsColor === 'mono' ? 'Mono' : 'Color')
       : (state.film === 'acros' ? 'Acros' : 'Color');
     els.modelHint.textContent = physics
-      ? 'Tier-1 layered-coverage physics, browser preview.'
+      ? (state.physicsTier === 2
+        ? 'Tier-2 discrete polygonal grains (WebGL2).'
+        : 'Tier-1 layered-coverage physics, browser preview.')
       : 'Measured X-T4 film-grain operator.';
+    els.tierHint.textContent = state.physicsTier === 2
+      ? 'Tier 2 paints discrete polygonal grains layer by layer (slower); Preview uses the fast statistical field.'
+      : 'Tier 1 uses the fast statistical layered-coverage field; Discrete places polygonal grains.';
     els.physicsGrain.value = String(state.physicsGrain);
     els.physicsGrainOut.textContent = `${state.physicsGrain} px`;
-    els.physicsLayers.value = String(state.physicsLayers);
-    els.physicsLayersOut.textContent = String(state.physicsLayers);
+    els.physicsLayers.min = tier2 ? '4' : '4';
+    els.physicsLayers.max = tier2 ? '40' : '160';
+    els.physicsLayers.step = tier2 ? '2' : '4';
+    els.physicsLayers.value = String(activeLayers);
+    els.physicsLayersOut.textContent = String(activeLayers);
+    els.layersHint.textContent = tier2
+      ? 'Physical layers for Tier 2 (4–40). More layers give finer, subtler grain.'
+      : 'Effective layers for Tier 1; the calibrated generic profile uses 120.';
     els.physicsRho.value = String(state.physicsRho);
     els.physicsRhoOut.textContent = state.physicsRho.toFixed(2);
     els.physicsChroma.value = String(state.physicsChroma);
@@ -1744,6 +1834,15 @@
       });
     });
 
+    document.querySelectorAll('[data-physics-tier]').forEach((b) => {
+      b.addEventListener('click', () => {
+        state.physicsTier = Number(b.dataset.physicsTier) === 2 ? 2 : 1;
+        saveSettings();
+        syncUI();
+        render();
+      });
+    });
+
     els.physicsGrain.addEventListener('input', () => {
       state.physicsGrain = Math.max(2, Math.min(16, Number(els.physicsGrain.value) || 6));
       els.physicsGrainOut.textContent = `${state.physicsGrain} px`;
@@ -1753,8 +1852,13 @@
     });
 
     els.physicsLayers.addEventListener('input', () => {
-      state.physicsLayers = Math.max(4, Math.min(160, Number(els.physicsLayers.value) || 120));
-      els.physicsLayersOut.textContent = String(state.physicsLayers);
+      if (state.physicsTier === 2) {
+        state.physicsLayers2 = Math.max(4, Math.min(40, Number(els.physicsLayers.value) || 20));
+        els.physicsLayersOut.textContent = String(state.physicsLayers2);
+      } else {
+        state.physicsLayers = Math.max(4, Math.min(160, Number(els.physicsLayers.value) || 120));
+        els.physicsLayersOut.textContent = String(state.physicsLayers);
+      }
       saveSettings();
       syncUI();
       scheduleRender();
@@ -1918,7 +2022,7 @@
       const blob = await new Promise((resolve) => renderer.canvas.toBlob(resolve, type, 0.95));
       if (!blob) throw new Error('encode');
       const tag = state.model === 'physics'
-        ? `physics-${state.physicsGrain}px-${state.physicsLayers}l`
+        ? `physics-t${state.physicsTier}-${state.physicsGrain}px-${state.physicsTier === 2 ? state.physicsLayers2 : state.physicsLayers}l`
         : `${state.size}-${state.strength}`;
       const name = `grain-${tag}-${Date.now()}.${ext}`;
       const file = new File([blob], name, { type });
