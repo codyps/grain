@@ -113,7 +113,7 @@
       else if (typeof raw.gate === 'boolean') s.tone = raw.gate;
       if ([0, 2048, 3072, 4096].includes(raw.maxEdge)) s.maxEdge = raw.maxEdge;
       if (raw.format === 'jpeg' || raw.format === 'png') s.format = raw.format;
-      if (!raw.version || raw.version < 2) s.maxEdge = 0;
+      if ((!raw.version || raw.version < 2) && raw.maxEdge === 4096) s.maxEdge = 0;
       s.version = 2;
     } catch (_) { /* ignore corrupt storage */ }
     return s;
